@@ -1,0 +1,31 @@
+# For local development with live reload
+# In order for the app to access GCP services, mount your
+# local gcloud credentials into the container
+# You must download gcloud SDK and authenticate locally first:
+#   https://docs.cloud.google.com/sdk/docs/install
+#   gcloud auth application-default login
+services:
+  server:
+    build:
+      context: .
+    ports:
+      - "8080:8080"
+    environment:
+      # Point to the mounted credentials
+      - GOOGLE_APPLICATION_CREDENTIALS=/home/appuser/.config/gcloud/application_default_credentials.json
+      - GOOGLE_CLOUD_PROJECT=${GOOGLE_CLOUD_PROJECT}
+      - GOOGLE_CLOUD_LOCATION=${GOOGLE_CLOUD_LOCATION}
+      - CORPUS_ID=${CORPUS_ID}
+    volumes:
+      # Mount local gcloud config (read-only)
+      - ~/.config/gcloud:/home/appuser/.config/gcloud:ro
+    develop:
+      watch:
+        # Sync source changes into the running container
+        - action: sync
+          path: ./src
+          target: /app/src
+        # If requirements.txt changes, rebuild the image automatically
+        - action: rebuild
+          path: ./requirements.txt
+    command: uvicorn src.app:app --host 0.0.0.0 --port 8080 --reload

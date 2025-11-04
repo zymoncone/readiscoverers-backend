@@ -1,0 +1,6 @@
+fastapi==0.120.3
+uvicorn==0.38.0
+typing
+pydantic
+google-cloud-aiplatform
+google-genai
