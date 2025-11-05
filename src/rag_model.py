@@ -7,7 +7,6 @@ from vertexai import rag
 PROJECT_ID = str(os.environ.get("GOOGLE_CLOUD_PROJECT"))
 LOCATION = str(os.environ.get("GOOGLE_CLOUD_LOCATION"))
 EXISTING_CORPUS_ID = str(os.environ.get("CORPUS_ID", None))
-display_name = "test_corpus_1"
 paths = [
     "https://drive.google.com/drive/folders/1G-_s_17G-d4BQcPAGjV1TL9nhXDP4G-g"
 ]  # Supports Google Cloud Storage and Google Drive Links
@@ -30,7 +29,6 @@ def get_rag_model_response(
                 "No corpus ID provided. Please set the CORPUS_ID environment variable."
             )
         try:
-
             corpus_resource_name = f"projects/{PROJECT_ID}/locations/{LOCATION}/ragCorpora/{EXISTING_CORPUS_ID}"
 
             # Get the existing corpus using its full resource name
@@ -58,19 +56,20 @@ def get_rag_model_response(
             ),
         )
 
-    # Import Files to the RagCorpus
-    rag.import_files(
-        rag_corpus.name,
-        paths,
-        # Optional
-        transformation_config=rag.TransformationConfig(
-            chunking_config=rag.ChunkingConfig(
-                chunk_size=512,
-                chunk_overlap=100,
+        # Import Files to the RagCorpus ONLY when creating a new corpus
+        print(f"Importing files to new corpus: {rag_corpus.name}")
+        rag.import_files(
+            rag_corpus.name,
+            paths,
+            # Optional
+            transformation_config=rag.TransformationConfig(
+                chunking_config=rag.ChunkingConfig(
+                    chunk_size=512,
+                    chunk_overlap=100,
+                ),
             ),
-        ),
-        max_embedding_requests_per_min=1000,  # Optional
-    )
+            max_embedding_requests_per_min=1000,  # Optional
+        )
 
     # Create a RAG retrieval tool
     rag_retrieval_tool = Tool(
@@ -85,11 +84,23 @@ def get_rag_model_response(
 
     MODEL_ID = "gemini-2.0-flash-001"
 
-    # Create a Gemini model instance
-    response = client.models.generate_content(
-        model=MODEL_ID,
-        contents=user_query,
-        config=GenerateContentConfig(tools=[rag_retrieval_tool]),
-    )
+    try:
+        # Create a Gemini model instance
+        print(f"Calling Gemini API with model: {MODEL_ID}")
+        response = client.models.generate_content(
+            model=MODEL_ID,
+            contents=user_query,
+            config=GenerateContentConfig(tools=[rag_retrieval_tool]),
+        )
+        return response.text
+    except Exception as e:
+        error_msg = str(e)
+        print(f"Error calling Gemini API: {error_msg}")
 
-    return response.text
+        # Check for specific error types
+        if "RESOURCE_EXHAUSTED" in error_msg or "429" in error_msg:
+            return "Error: API quota exceeded. You've hit the rate limit for Vertex AI/Gemini API. Please wait a few minutes and try again, or check your quota at https://console.cloud.google.com/iam-admin/quotas"
+        elif "PERMISSION_DENIED" in error_msg or "403" in error_msg:
+            return "Error: Permission denied. Please check that your service account has the necessary permissions for Vertex AI."
+        else:
+            return f"Error calling AI model: {error_msg}"
