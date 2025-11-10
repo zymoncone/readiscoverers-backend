@@ -44,3 +44,7 @@ Thumbs.db
 
 # gcp configs
 api_config.yaml
+
+# Test files
+test.py
+*.csv

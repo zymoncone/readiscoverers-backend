@@ -16,9 +16,12 @@ services:
       - GOOGLE_CLOUD_PROJECT=${GOOGLE_CLOUD_PROJECT}
       - GOOGLE_CLOUD_LOCATION=${GOOGLE_CLOUD_LOCATION}
       - CORPUS_ID=${CORPUS_ID}
+      - ENV=${ENV}
     volumes:
       # Mount local gcloud config (read-only)
       - ~/.config/gcloud:/home/appuser/.config/gcloud:ro
+      # Mount temp directory to persist downloaded files
+      - ./temp:/tmp
     develop:
       watch:
         # Sync source changes into the running container

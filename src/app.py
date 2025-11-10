@@ -2,7 +2,15 @@ from typing import Optional
 from pydantic import BaseModel
 from fastapi import FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
+import pandas as pd
+import vertexai
+from google import genai
+import os
+
+from .constants import PROJECT_ID, TEMP_DIR
+from .get_book_df import get_book_df
 from .rag_model import get_rag_model_response
+from .search import find_best_passage
 
 # All origins (production + localhost for testing)
 allowed_origins = [
@@ -29,9 +37,27 @@ app.add_middleware(
 )
 
 
+vertexai.init(project=PROJECT_ID, location="us-east4")
+client = genai.Client(
+    vertexai=True, project=PROJECT_ID, location="us-east4"
+)  # Changed location to match vertexai.init
+
+
 class QueryRequest(BaseModel):
     user_query: str = None
     new_rag_corpus_name: Optional[str] = None
+
+
+class SearchRequest(BaseModel):
+    query: str = None
+    local_filename: str = None
+    top_k: int = 3
+
+
+class BookDataRequest(BaseModel):
+    url: str = None
+    local_filename: str = None
+    chunk_size: int = 1200
 
 
 @app.get("/")
@@ -47,23 +73,53 @@ async def options_root():
     return Response(status_code=200)
 
 
-@app.post("/v1/model-response")
-async def model_response(req: QueryRequest, request: Request):
-    origin = request.headers.get("origin", "No origin header")
-    print(f"Model response endpoint called from origin: {origin}")
-    print(f"Query: {req.user_query}")
+@app.post("/v1/book-data")
+async def book_data(req: BookDataRequest):
+    response = get_book_df(
+        url=req.url,
+        local_filename=req.local_filename,
+        chunk_size=req.chunk_size,
+        client=client,
+    )
+    if response["status"] == "error":
+        return response
+    df = response["data"]
+    # Save to /tmp for Docker compatibility
+    os.makedirs(TEMP_DIR, exist_ok=True)
+    df.to_pickle(f"{TEMP_DIR}/{req.local_filename}.pkl")
+    return {"status": "success", "message": "Book data processed and saved."}
 
-    try:
-        response = get_rag_model_response(req.user_query, req.new_rag_corpus_name)
-        return {"user_query": req.user_query, "response": response}
-    except Exception as e:
-        error_msg = str(e)
-        print(f"Error in model_response endpoint: {error_msg}")
-        return {
-            "user_query": req.user_query,
-            "response": f"Error: {error_msg}",
-            "error": True,
-        }
+
+@app.options("/v1/book-data")
+async def options_book_data():
+    """Handle CORS preflight for book data endpoint"""
+    return Response(status_code=200)
+
+
+@app.post("/v1/search-response")
+async def search_response(req: SearchRequest):
+    if req.local_filename is None:
+        return {"status": "error", "message": "local_filename must be provided."}
+    if req.query is None:
+        return {"status": "error", "message": "query must be provided."}
+    if not client:
+        return {"status": "error", "message": "GenAI client is not initialized."}
+    # Read from /tmp for Docker compatibility
+    df = pd.read_pickle(f"{TEMP_DIR}/{req.local_filename}.pkl")
+    return find_best_passage(
+        query=req.query, dataframe=df, client=client, top_k=req.top_k
+    )
+
+
+@app.options("/v1/search-response")
+async def options_search_response():
+    """Handle CORS preflight for search response endpoint"""
+    return Response(status_code=200)
+
+
+@app.post("/v1/model-response")
+async def model_response(req: QueryRequest):
+    return {"status": "success", "message": "temporary placeholder response."}
 
 
 @app.options("/v1/model-response")
