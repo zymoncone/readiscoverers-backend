@@ -3,10 +3,13 @@ import pandas as pd
 import numpy as np
 import re
 from google.genai.types import EmbedContentConfig
+
 from .constants import EMBEDDING_MODEL_ID
 
 
-def find_best_passage(query: str, dataframe: pd.DataFrame, client, top_k=3):
+def find_best_passage(
+    query: str, dataframe: pd.DataFrame, client, top_k: int = 3
+) -> list[dict]:
     """
     Compute the distances between the query and each document in the dataframe
     using the dot product.

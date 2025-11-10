@@ -9,7 +9,7 @@ import os
 
 from .constants import PROJECT_ID, TEMP_DIR
 from .get_book_df import get_book_df
-from .rag_model import get_rag_model_response
+from .model import call_model_with_structured_output
 from .search import find_best_passage
 
 # All origins (production + localhost for testing)
@@ -43,9 +43,8 @@ client = genai.Client(
 )  # Changed location to match vertexai.init
 
 
-class QueryRequest(BaseModel):
+class ModelRequest(BaseModel):
     user_query: str = None
-    new_rag_corpus_name: Optional[str] = None
 
 
 class SearchRequest(BaseModel):
@@ -104,6 +103,7 @@ async def search_response(req: SearchRequest):
         return {"status": "error", "message": "query must be provided."}
     if not client:
         return {"status": "error", "message": "GenAI client is not initialized."}
+
     # Read from /tmp for Docker compatibility
     df = pd.read_pickle(f"{TEMP_DIR}/{req.local_filename}.pkl")
     return find_best_passage(
@@ -118,8 +118,37 @@ async def options_search_response():
 
 
 @app.post("/v1/model-response")
-async def model_response(req: QueryRequest):
-    return {"status": "success", "message": "temporary placeholder response."}
+async def model_response(req: ModelRequest):
+    if req.user_query is None:
+        return {
+            "status": "error",
+            "message": "user_query must be provided",
+        }
+
+    structured_result = call_model_with_structured_output(
+        user_query=req.user_query, client=client
+    )
+
+    if not structured_result:
+        # Fall back to original query if there's an error
+        search_query = req.user_query
+        keywords = []
+        if os.environ.get("ENV") == "dev":
+            print(f"No structured result, using original query: {req.user_query}")
+    else:
+        # Use the optimized search query
+        search_query = structured_result.get("search_query", req.user_query)
+        keywords = structured_result.get("keywords", [])
+        if os.environ.get("ENV") == "dev":
+            print(f"Original query: {req.user_query}")
+            print(f"Optimized query: {search_query}")
+            print(f"Keywords: {keywords}")
+
+    return {
+        "status": "success",
+        "search_query": search_query,
+        "keywords": keywords,
+    }
 
 
 @app.options("/v1/model-response")

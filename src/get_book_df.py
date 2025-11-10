@@ -161,7 +161,7 @@ def read_book_to_chunks(local_filename: str, chunk_size: int) -> pd.DataFrame:
         chunk_index = 0
         for paragraph in paragraph_chunks:
             new_chunk += paragraph + "\n\n"
-            if len(new_chunk) >= chunk_size:  # Adjust chunk size as needed
+            if len(new_chunk) >= chunk_size:
                 documents.append(
                     (
                         int(chapter_index),

@@ -1,0 +1,1 @@
+> Files in this folder contain temperary objects of raw text or embedded vector pkl files. These files are intentionally left out via .gitignore
