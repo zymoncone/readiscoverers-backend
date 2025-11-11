@@ -7,10 +7,13 @@ import vertexai
 from google import genai
 import os
 
-from .constants import PROJECT_ID, TEMP_DIR
+from .constants import TEMP_DIR
 from .get_book_df import get_book_df
 from .model import call_model_with_structured_output
 from .search import find_best_passage
+
+PROJECT_ID = str(os.environ.get("GOOGLE_CLOUD_PROJECT"))
+LOCATION = str(os.environ.get("GOOGLE_CLOUD_LOCATION"))
 
 # All origins (production + localhost for testing)
 allowed_origins = [
@@ -37,9 +40,9 @@ app.add_middleware(
 )
 
 
-vertexai.init(project=PROJECT_ID, location="us-east4")
+vertexai.init(project=PROJECT_ID, location=LOCATION)
 client = genai.Client(
-    vertexai=True, project=PROJECT_ID, location="us-east4"
+    vertexai=True, project=PROJECT_ID, location=LOCATION
 )  # Changed location to match vertexai.init
 
 

@@ -33,6 +33,9 @@ def find_best_passage(
         for i, idx in enumerate(top_indices, 1):
             print(f"Result {i} - Dot product: {dot_products[idx]:.4f}")
 
+    # Calculate totals for progress indicators
+    total_chunks = len(dataframe)
+
     results = []
     for idx in top_indices:
         title = str(dataframe.iloc[idx]["title"])
@@ -60,6 +63,9 @@ def find_best_passage(
             # If pattern doesn't match, use full text
             actual_text = str(chunk_text)
 
+        # Calculate progress indicators
+        book_progress = round((int(idx) / total_chunks) * 100, 1)
+
         results.append(
             {
                 "chunk_index": int(idx),
@@ -69,6 +75,8 @@ def find_best_passage(
                 "chapter_name": chapter_name,
                 "text": actual_text,
                 "score": float(dot_products[idx]),
+                "book_progress_percent": book_progress,
+                "passage_number": f"Passage {int(idx) + 1} of {total_chunks}",
             }
         )
 

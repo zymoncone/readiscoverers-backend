@@ -153,9 +153,22 @@ def read_book_to_chunks(local_filename: str, chunk_size: int) -> pd.DataFrame:
         else:
             chapter_end = len(content)
 
+        # Get the raw chapter text
         chapter_text = content[chapter_start:chapter_end].strip()
 
-        paragraph_chunks = [p.strip() for p in chapter_text.split("\n\n") if p.strip()]
+        # Remove the chapter heading from the beginning of the text
+        # This removes "CHAPTER 1\nA TERRIBLE LOSS\n\n" from the start
+        chapter_text_without_heading = re.sub(
+            r"^Chapter\s+(?:[IVXLCDM]+|\d+|One|Two|Three|Four|Five|Six|Seven|Eight|Nine|Ten|Eleven|Twelve|Thirteen|Fourteen|Fifteen|Sixteen|Seventeen|Eighteen|Nineteen|Twenty)\s*\n.+?\n+",
+            "",
+            chapter_text,
+            count=1,
+            flags=re.IGNORECASE,
+        ).strip()
+
+        paragraph_chunks = [
+            p.strip() for p in chapter_text_without_heading.split("\n\n") if p.strip()
+        ]
 
         new_chunk = new_chunk_starter_text
         chunk_index = 0
@@ -171,7 +184,9 @@ def read_book_to_chunks(local_filename: str, chunk_size: int) -> pd.DataFrame:
                 )
                 new_chunk = new_chunk_starter_text
                 chunk_index += 1
-        if new_chunk:
+        if (
+            new_chunk != new_chunk_starter_text
+        ):  # Only add if there's content beyond the starter
             documents.append(
                 (
                     int(chapter_index),
