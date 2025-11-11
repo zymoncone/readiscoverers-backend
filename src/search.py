@@ -1,7 +1,10 @@
+"""Module for searching book passages using semantic similarity."""
+
 import os
+import re
+
 import pandas as pd
 import numpy as np
-import re
 from google.genai.types import EmbedContentConfig
 
 from .constants import EMBEDDING_MODEL_ID
@@ -14,6 +17,7 @@ def find_best_passage(
     Compute the distances between the query and each document in the dataframe
     using the dot product.
     """
+    # pylint: disable=too-many-locals
     query_embedding = client.models.embed_content(
         model=EMBEDDING_MODEL_ID,
         contents=query,

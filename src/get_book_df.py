@@ -1,6 +1,9 @@
+"""Module for downloading and processing books into searchable chunks."""
+
 import os
-from typing import Optional, Union
 import re
+from typing import Union
+
 import pandas as pd
 import requests
 from google.genai.types import EmbedContentConfig
@@ -9,7 +12,15 @@ from .constants import EMBEDDING_MODEL_ID, TEMP_DIR
 
 
 def download_file(url: str, local_filename: str) -> dict:
-    """Download a file from URL to local workspace"""
+    """Download a file from URL to local workspace.
+
+    Args:
+        url: The URL of the text file to download
+        local_filename: The filename to save the downloaded content as
+
+    Returns:
+        A dict with 'status' and either 'file' path or error 'message'
+    """
     if url is None or not url.endswith(".txt"):
         return {
             "status": "error",
@@ -34,7 +45,7 @@ def download_file(url: str, local_filename: str) -> dict:
         # Construct full path with temp/ directory
         filepath = os.path.join(TEMP_DIR, filename_ext)
 
-        response = requests.get(url)
+        response = requests.get(url, timeout=60)  # 60 second timeout
         response.raise_for_status()  # Raise error if download fails
 
         with open(filepath, "w", encoding="utf-8") as f:
@@ -43,14 +54,29 @@ def download_file(url: str, local_filename: str) -> dict:
         if os.environ.get("ENV") == "dev":
             print(f"Downloaded {filepath}")
         return {"status": "success", "file": filepath}
-    except Exception as e:
+    except requests.RequestException as e:
         return {
             "status": "error",
             "message": f"Error downloading {filename_ext}: {str(e)}",
         }
+    except IOError as e:
+        return {
+            "status": "error",
+            "message": f"Error writing file {filename_ext}: {str(e)}",
+        }
 
 
 def embed_fn(title: str, text: str, client) -> Union[dict, None]:
+    """Generate embeddings for a text chunk using the specified model.
+
+    Args:
+        title: The title of the chunk
+        text: The text content to embed
+        client: The GenAI client instance
+
+    Returns:
+        Embedding values or None on error
+    """
     response = client.models.embed_content(
         model=EMBEDDING_MODEL_ID,
         contents=text,
@@ -61,6 +87,15 @@ def embed_fn(title: str, text: str, client) -> Union[dict, None]:
 
 
 def apply_embeddings(df: pd.DataFrame, client) -> Union[pd.DataFrame, None]:
+    """Apply embeddings to each row in the dataframe.
+
+    Args:
+        df: DataFrame containing book chunks
+        client: The GenAI client instance
+
+    Returns:
+        DataFrame with embeddings column added, or None if empty
+    """
     if df.empty:
         if os.environ.get("ENV") == "dev":
             print("DataFrame is empty; skipping embedding application.")
@@ -72,6 +107,16 @@ def apply_embeddings(df: pd.DataFrame, client) -> Union[pd.DataFrame, None]:
 
 
 def read_book_to_chunks(local_filename: str, chunk_size: int) -> pd.DataFrame:
+    """Read a book file and split it into chunks by chapter.
+
+    Args:
+        local_filename: Name of the book file to process
+        chunk_size: Maximum size of each text chunk
+
+    Returns:
+        DataFrame with columns: chapter_index, title, text
+    """
+    # pylint: disable=too-many-locals, too-many-branches, too-many-statements
     filepath = os.path.join(TEMP_DIR, f"{local_filename}.txt")
     with open(filepath, encoding="utf-8", errors="ignore") as f:
         book = f.read()
@@ -103,10 +148,18 @@ def read_book_to_chunks(local_filename: str, chunk_size: int) -> pd.DataFrame:
     # 2. Title above chapter number: "The Title\n\nCHAPTER 1"
 
     # Pattern 1: Title below (like "CHAPTER 1\nThe Title")
-    chapter_pattern_below = r"^Chapter\s+((?:[IVXLCDM]+|\d+|One|Two|Three|Four|Five|Six|Seven|Eight|Nine|Ten|Eleven|Twelve|Thirteen|Fourteen|Fifteen|Sixteen|Seventeen|Eighteen|Nineteen|Twenty))\s*\n(.+?)$"
+    chapter_pattern_below = (
+        r"^Chapter\s+((?:[IVXLCDM]+|\d+|One|Two|Three|Four|Five|Six|Seven|Eight|"
+        r"Nine|Ten|Eleven|Twelve|Thirteen|Fourteen|Fifteen|Sixteen|Seventeen|"
+        r"Eighteen|Nineteen|Twenty))\s*\n(.+?)$"
+    )
 
     # Pattern 2: Title above (like "The Title\n\nCHAPTER 1")
-    chapter_pattern_above = r"^([A-Z][A-Za-z\s]{2,50})\s*\n+\s*Chapter\s+((?:[IVXLCDM]+|\d+|One|Two|Three|Four|Five|Six|Seven|Eight|Nine|Ten|Eleven|Twelve|Thirteen|Fourteen|Fifteen|Sixteen|Seventeen|Eighteen|Nineteen|Twenty))\s*$"
+    chapter_pattern_above = (
+        r"^([A-Z][A-Za-z\s]{2,50})\s*\n+\s*Chapter\s+((?:[IVXLCDM]+|\d+|One|Two|"
+        r"Three|Four|Five|Six|Seven|Eight|Nine|Ten|Eleven|Twelve|Thirteen|"
+        r"Fourteen|Fifteen|Sixteen|Seventeen|Eighteen|Nineteen|Twenty))\s*$"
+    )
 
     # Try pattern 1 first (title below - most common)
     chapter_matches = list(
@@ -158,8 +211,13 @@ def read_book_to_chunks(local_filename: str, chunk_size: int) -> pd.DataFrame:
 
         # Remove the chapter heading from the beginning of the text
         # This removes "CHAPTER 1\nA TERRIBLE LOSS\n\n" from the start
+        heading_pattern = (
+            r"^Chapter\s+(?:[IVXLCDM]+|\d+|One|Two|Three|Four|Five|Six|Seven|Eight|"
+            r"Nine|Ten|Eleven|Twelve|Thirteen|Fourteen|Fifteen|Sixteen|Seventeen|"
+            r"Eighteen|Nineteen|Twenty)\s*\n.+?\n+"
+        )
         chapter_text_without_heading = re.sub(
-            r"^Chapter\s+(?:[IVXLCDM]+|\d+|One|Two|Three|Four|Five|Six|Seven|Eight|Nine|Ten|Eleven|Twelve|Thirteen|Fourteen|Fifteen|Sixteen|Seventeen|Eighteen|Nineteen|Twenty)\s*\n.+?\n+",
+            heading_pattern,
             "",
             chapter_text,
             count=1,
@@ -214,6 +272,7 @@ def read_book_to_chunks(local_filename: str, chunk_size: int) -> pd.DataFrame:
 def get_book_df(
     url: str = None, local_filename: str = None, chunk_size: int = 1200, client=None
 ) -> Union[pd.DataFrame, dict]:
+    """Download and process a book into a DataFrame of chunks with embeddings."""
     if url is None or local_filename is None:
         return {
             "status": "error",

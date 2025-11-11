@@ -1,11 +1,13 @@
-from typing import Optional
+"""FastAPI application for the Readiscoverers backend API."""
+
+import os
+
 from pydantic import BaseModel
 from fastapi import FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 import pandas as pd
 import vertexai
 from google import genai
-import os
 
 from .constants import TEMP_DIR
 from .get_book_df import get_book_df
@@ -47,16 +49,25 @@ client = genai.Client(
 
 
 class ModelRequest(BaseModel):
+    """Request model for model response endpoint."""
+
+    # pylint: disable=too-few-public-methods
     user_query: str = None
 
 
 class SearchRequest(BaseModel):
+    """Request model for search response endpoint."""
+
+    # pylint: disable=too-few-public-methods
     query: str = None
     local_filename: str = None
     top_k: int = 3
 
 
 class BookDataRequest(BaseModel):
+    """Request model for book data processing endpoint."""
+
+    # pylint: disable=too-few-public-methods
     url: str = None
     local_filename: str = None
     chunk_size: int = 1200
@@ -64,6 +75,7 @@ class BookDataRequest(BaseModel):
 
 @app.get("/")
 async def root(request: Request):
+    """Root endpoint to verify API is running."""
     origin = request.headers.get("origin", "No origin header")
     print(f"Root endpoint called from origin: {origin}")
     return {"message": "Hey there! Welcome to a RAG world."}
@@ -71,12 +83,13 @@ async def root(request: Request):
 
 @app.options("/")
 async def options_root():
-    """Handle CORS preflight for root endpoint"""
+    """Handle CORS preflight for root endpoint."""
     return Response(status_code=200)
 
 
 @app.post("/v1/book-data")
 async def book_data(req: BookDataRequest):
+    """Download and process a book from URL into chunks with embeddings."""
     response = get_book_df(
         url=req.url,
         local_filename=req.local_filename,
@@ -94,12 +107,13 @@ async def book_data(req: BookDataRequest):
 
 @app.options("/v1/book-data")
 async def options_book_data():
-    """Handle CORS preflight for book data endpoint"""
+    """Handle CORS preflight for book data endpoint."""
     return Response(status_code=200)
 
 
 @app.post("/v1/search-response")
 async def search_response(req: SearchRequest):
+    """Search for relevant passages in processed book data."""
     if req.local_filename is None:
         return {"status": "error", "message": "local_filename must be provided."}
     if req.query is None:
@@ -116,12 +130,13 @@ async def search_response(req: SearchRequest):
 
 @app.options("/v1/search-response")
 async def options_search_response():
-    """Handle CORS preflight for search response endpoint"""
+    """Handle CORS preflight for search response endpoint."""
     return Response(status_code=200)
 
 
 @app.post("/v1/model-response")
 async def model_response(req: ModelRequest):
+    """Convert natural language query into optimized book search query."""
     if req.user_query is None:
         return {
             "status": "error",
@@ -156,5 +171,5 @@ async def model_response(req: ModelRequest):
 
 @app.options("/v1/model-response")
 async def options_model_response():
-    """Handle CORS preflight for model response endpoint"""
+    """Handle CORS preflight for model response endpoint."""
     return Response(status_code=200)

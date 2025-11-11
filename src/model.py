@@ -1,10 +1,13 @@
+"""Module for converting natural language queries into structured book search queries."""
+
+import os
+from typing import Union
+
 from google.genai.types import (
     GenerateContentConfig,
     FunctionDeclaration,
     Tool,
 )
-from typing import Union
-import os
 
 
 def call_model_with_structured_output(user_query: str, client) -> Union[dict, None]:
@@ -23,31 +26,44 @@ def call_model_with_structured_output(user_query: str, client) -> Union[dict, No
         function_declarations=[
             FunctionDeclaration(
                 name="generate_book_search_query",
-                description="Generates a semantic search query to find relevant passages in a book.",
+                description=(
+                    "Generates a semantic search query to find relevant "
+                    "passages in a book."
+                ),
                 parameters={
                     "type": "object",
                     "properties": {
                         "search_query": {
                             "type": "string",
-                            "description": "The refined search query text to find relevant book passages. This should capture the core semantic meaning of what the user is looking for.",
+                            "description": (
+                                "The refined search query text to find relevant "
+                                "book passages. This should capture the core "
+                                "semantic meaning of what the user is looking for."
+                            ),
                         },
                         "context": {
                             "type": "string",
-                            "description": "Additional context about what type of information the user wants (e.g., 'character description', 'plot event', 'dialogue', 'setting description').",
+                            "description": (
+                                "Additional context about what type of information "
+                                "the user wants (e.g., 'character description', "
+                                "'plot event', 'dialogue', 'setting description')."
+                            ),
                         },
                         "keywords": {
                             "type": "array",
                             "items": {"type": "string"},
-                            "description": "Important keywords or phrases that should appear in the results (e.g., character names, locations, themes).",
+                            "description": (
+                                "Important keywords or phrases that should appear "
+                                "in the results (e.g., character names, locations, "
+                                "themes)."
+                            ),
                         },
                     },
                     "required": ["search_query"],
                 },
             )
         ]
-    )
-
-    # Construct the prompt with clear instructions for the model
+    )  # Construct the prompt with clear instructions for the model
     # and reference the desired output format implicitly via the tool
     prompt = f"""
     You are an expert at converting natural language questions into optimized semantic search queries for finding relevant passages in books.
@@ -72,10 +88,10 @@ def call_model_with_structured_output(user_query: str, client) -> Union[dict, No
 
     # Generate content with the model, including the tool definition
     try:
-        MODEL_ID = "gemini-2.0-flash-001"
+        model_id = "gemini-2.0-flash-001"
 
         response = client.models.generate_content(
-            model=MODEL_ID,
+            model=model_id,
             contents=prompt,
             config=GenerateContentConfig(
                 temperature=0.0,  # Aim for deterministic output for query generation
@@ -101,34 +117,9 @@ def call_model_with_structured_output(user_query: str, client) -> Union[dict, No
         print(f"Response: {response}")
         return None
 
-    except Exception as e:
+    except Exception as e:  # pylint: disable=broad-exception-caught
         print(f"An error occurred in call_model_with_structured_output: {e}")
-        import traceback
+        import traceback  # pylint: disable=import-outside-toplevel
 
         traceback.print_exc()
         return None
-
-
-# --- FOR TESTING ---
-if __name__ == "__main__":
-    import vertexai
-    from google import genai
-
-    PROJECT_ID = str(os.environ.get("GOOGLE_CLOUD_PROJECT"))
-    LOCATION = str(os.environ.get("GOOGLE_CLOUD_LOCATION"))
-
-    vertexai.init(project=PROJECT_ID, location=LOCATION)
-    client = genai.Client(vertexai=True, project=PROJECT_ID, location=LOCATION)
-
-    user_question_1 = "When does Dorothy meet the Scarecrow for the first time?"
-    user_question_2 = "What happens in the Emerald City?"
-    user_question_3 = "Tell me about the Wicked Witch of the West"
-
-    print(f"\nProcessing query: '{user_question_1}'")
-    call_model_with_structured_output(user_question_1, client)
-
-    print(f"\nProcessing query: '{user_question_2}'")
-    call_model_with_structured_output(user_question_2, client)
-
-    print(f"\nProcessing query: '{user_question_3}'")
-    call_model_with_structured_output(user_question_3, client)
