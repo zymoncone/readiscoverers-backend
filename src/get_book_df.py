@@ -10,6 +10,8 @@ from google.genai.types import EmbedContentConfig
 
 from .constants import EMBEDDING_MODEL_ID, TEMP_DIR
 
+# split with overlap chunking
+
 
 def download_file(url: str, local_filename: str) -> dict:
     """Download a file from URL to local workspace.
@@ -225,7 +227,11 @@ def read_book_to_chunks(local_filename: str, chunk_size: int) -> pd.DataFrame:
         ).strip()
 
         paragraph_chunks = [
-            p.strip() for p in chapter_text_without_heading.split("\n\n") if p.strip()
+            p.replace(
+                "\n", " "
+            ).strip()  # replace newlines within paragraphs with spaces. Helps with frontend formatting
+            for p in chapter_text_without_heading.split("\n\n")
+            if p.strip()
         ]
 
         new_chunk = new_chunk_starter_text
