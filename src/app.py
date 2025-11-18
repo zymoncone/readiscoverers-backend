@@ -12,7 +12,7 @@ from google import genai
 from .constants import TEMP_DIR
 from .get_book_df import get_book_df
 from .model import call_model_with_structured_output
-from .search import find_best_passage
+from .search import find_best_text_chunks
 
 PROJECT_ID = str(os.environ.get("GOOGLE_CLOUD_PROJECT"))
 LOCATION = str(os.environ.get("GOOGLE_CLOUD_LOCATION"))
@@ -70,7 +70,10 @@ class BookDataRequest(BaseModel):
     # pylint: disable=too-few-public-methods
     url: str = None
     local_filename: str = None
-    chunk_size: int = 1200
+    target_chunk_size: int = 800
+    sentence_overlap: int = 2
+    small_paragraph_length: int = 200
+    small_paragraph_overlap: int = 2
 
 
 @app.get("/")
@@ -78,7 +81,7 @@ async def root(request: Request):
     """Root endpoint to verify API is running."""
     origin = request.headers.get("origin", "No origin header")
     print(f"Root endpoint called from origin: {origin}")
-    return {"message": "Hey there! Welcome to a RAG world."}
+    return {"message": "Hey there! Looks like the backend API is healthy."}
 
 
 @app.options("/")
@@ -93,7 +96,10 @@ async def book_data(req: BookDataRequest):
     response = get_book_df(
         url=req.url,
         local_filename=req.local_filename,
-        chunk_size=req.chunk_size,
+        target_chunk_size=req.target_chunk_size,
+        sentence_overlap=req.sentence_overlap,
+        small_paragraph_length=req.small_paragraph_length,
+        small_paragraph_overlap=req.small_paragraph_overlap,
         client=client,
     )
     if response["status"] == "error":
@@ -123,9 +129,12 @@ async def search_response(req: SearchRequest):
 
     # Read from /tmp for Docker compatibility
     df = pd.read_pickle(f"{TEMP_DIR}/{req.local_filename}.pkl")
-    return find_best_passage(
+    search_results = find_best_text_chunks(
         query=req.query, dataframe=df, client=client, top_k=req.top_k
     )
+    for idx, result in enumerate(search_results):
+        print(f"R-{idx}: {result}")
+    return {"status": "success", "search_results": search_results}
 
 
 @app.options("/v1/search-response")

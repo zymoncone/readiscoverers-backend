@@ -10,7 +10,7 @@ from google.genai.types import EmbedContentConfig
 from .constants import EMBEDDING_MODEL_ID
 
 
-def find_best_passage(
+def find_best_text_chunks(
     query: str, dataframe: pd.DataFrame, client, top_k: int = 3
 ) -> list[dict]:
     """
@@ -72,6 +72,7 @@ def find_best_passage(
 
         results.append(
             {
+                "query": query,
                 "chunk_index": int(idx),
                 "chapter_index": chapter_index,
                 "chunk_in_chapter_index": chunk_in_chapter_index,

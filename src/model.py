@@ -78,12 +78,12 @@ def call_model_with_structured_output(user_query: str, client) -> Union[dict, No
 
     Examples:
     - User asks: "When does Dorothy meet the Scarecrow?"
-      → search_query: "Dorothy first encounters and meets the Scarecrow"
-      → keywords: ["Dorothy", "Scarecrow"]
+      - search_query: "Dorothy first encounters and meets the Scarecrow"
+      - keywords: ["Dorothy", "Scarecrow"]
 
     - User asks: "What happens in the Emerald City?"
-      → search_query: "events and scenes taking place in the Emerald City"
-      → keywords: ["Emerald City"]
+      - search_query: "events and scenes taking place in the Emerald City"
+      - keywords: ["Emerald City"]
     """
 
     # Generate content with the model, including the tool definition
