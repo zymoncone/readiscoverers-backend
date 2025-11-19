@@ -1,6 +1,7 @@
 """FastAPI application for the Readiscoverers backend API."""
 
 import os
+import json
 
 from pydantic import BaseModel
 from fastapi import FastAPI, Request, Response
@@ -62,6 +63,8 @@ class SearchRequest(BaseModel):
     query: str = None
     local_filename: str = None
     top_k: int = 3
+    query_id: str = None
+    enhanced_query: bool = None
 
 
 class BookDataRequest(BaseModel):
@@ -93,21 +96,53 @@ async def options_root():
 @app.post("/v1/book-data")
 async def book_data(req: BookDataRequest):
     """Download and process a book from URL into chunks with embeddings."""
+    if req.local_filename is None:
+        return {"status": "error", "message": "local_filename must be provided."}
+    if not client:
+        return {"status": "error", "message": "GenAI client is not initialized."}
+    if any(
+        param < 0
+        for param in [
+            req.target_chunk_size,
+            req.sentence_overlap,
+            req.small_paragraph_length,
+            req.small_paragraph_overlap,
+        ]
+    ):
+        return {
+            "status": "error",
+            "message": "All chunking parameters must be positive integers.",
+        }
+
     response = get_book_df(
         url=req.url,
         local_filename=req.local_filename,
-        target_chunk_size=req.target_chunk_size,
-        sentence_overlap=req.sentence_overlap,
-        small_paragraph_length=req.small_paragraph_length,
-        small_paragraph_overlap=req.small_paragraph_overlap,
+        target_chunk_size=int(req.target_chunk_size),
+        sentence_overlap=int(req.sentence_overlap),
+        small_paragraph_length=int(req.small_paragraph_length),
+        small_paragraph_overlap=int(req.small_paragraph_overlap),
         client=client,
     )
     if response["status"] == "error":
         return response
+
     df = response["data"]
-    # Save to /tmp for Docker compatibility
+
+    # Save both the dataframe AND metadata
     os.makedirs(TEMP_DIR, exist_ok=True)
     df.to_pickle(f"{TEMP_DIR}/{req.local_filename}.pkl")
+
+    # Save chunking metadata separately
+    metadata = {
+        "target_chunk_size": req.target_chunk_size,
+        "sentence_overlap": req.sentence_overlap,
+        "small_paragraph_length": req.small_paragraph_length,
+        "small_paragraph_overlap": req.small_paragraph_overlap,
+    }
+
+    with open(f"{TEMP_DIR}/{req.local_filename}_metadata.json", "w") as f:
+        json.dump(metadata, f)
+
     return {"status": "success", "message": "Book data processed and saved."}
 
 
@@ -126,14 +161,34 @@ async def search_response(req: SearchRequest):
         return {"status": "error", "message": "query must be provided."}
     if not client:
         return {"status": "error", "message": "GenAI client is not initialized."}
+    if req.top_k <= 0:
+        return {"status": "error", "message": "top_k must be a positive integer."}
+    if req.query_id is None:
+        return {"status": "error", "message": "query_id must be provided."}
+    if req.enhanced_query is None:
+        return {"status": "error", "message": "enhanced_query must be provided."}
 
-    # Read from /tmp for Docker compatibility
+    # Load dataframe
     df = pd.read_pickle(f"{TEMP_DIR}/{req.local_filename}.pkl")
+
+    # Load chunking metadata
+    metadata_path = f"{TEMP_DIR}/{req.local_filename}_metadata.json"
+    chunking_metadata = None
+    if os.path.exists(metadata_path):
+        with open(metadata_path, "r") as f:
+            chunking_metadata = json.load(f)
+
     search_results = find_best_text_chunks(
-        query=req.query, dataframe=df, client=client, top_k=req.top_k
+        query=req.query,
+        dataframe=df,
+        client=client,
+        top_k=req.top_k,
+        query_id=req.query_id,
+        enhanced_query=req.enhanced_query,
+        chunking_metadata=chunking_metadata,
     )
-    for idx, result in enumerate(search_results):
-        print(f"R-{idx}: {result}")
+    print(search_results)
+
     return {"status": "success", "search_results": search_results}
 
 
