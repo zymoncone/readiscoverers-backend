@@ -132,6 +132,10 @@ async def book_data(req: BookDataRequest):
     os.makedirs(TEMP_DIR, exist_ok=True)
     df.to_pickle(f"{TEMP_DIR}/{req.local_filename}.pkl")
 
+    if os.environ.get("ENV") == "dev":
+        print("Saving CSV for debugging purposes.")
+        df.to_csv(f"{TEMP_DIR}/{req.local_filename}.csv", index=False)
+
     # Save chunking metadata separately
     metadata = {
         "target_chunk_size": req.target_chunk_size,

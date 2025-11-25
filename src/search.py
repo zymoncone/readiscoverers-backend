@@ -48,21 +48,14 @@ def find_best_text_chunks(
 
     results = []
     for similarity_score_order, chunk_index in enumerate(top_indices, 1):
-        title = str(dataframe.iloc[chunk_index]["title"])
+        chapter_title = str(dataframe.iloc[chunk_index]["title"])
         chunk_text = str(dataframe.iloc[chunk_index]["text"])
         chapter_index = int(dataframe.iloc[chunk_index]["chapter_index"])
 
-        # Extract chapter number and name from title
-        # Pattern: "Chapter {number}: {name} ({chunk_num})"
-        title_match = re.match(r"Chapter\s+(.+?):\s+(.+?)\s*\((\d+)\)", title)
-        if title_match:
-            chapter_number_raw = str(title_match.group(1))  # e.g., "I", "II", "1", "2"
-            chapter_name = str(title_match.group(2))  # e.g., "The Cyclone"
-            chunk_in_chapter_index = int(title_match.group(3))  # e.g., "1", "2"
+        chunk_in_chapter_match = re.search(r"\((\d+)\)", chapter_title)
+        if chunk_in_chapter_match and chunk_in_chapter_match.group(1).isdigit():
+            chunk_in_chapter_index = int(chunk_in_chapter_match.group(1))
         else:
-            # Handle Introduction or other formats
-            chapter_number_raw = None
-            chapter_name = title
             chunk_in_chapter_index = None
 
         # Extract actual text content (everything after "From Chapter ... : ")
@@ -85,8 +78,8 @@ def find_best_text_chunks(
             "chunk_index": int(chunk_index),
             "chapter_index": chapter_index,
             "chunk_in_chapter_index": chunk_in_chapter_index,
-            "chapter_number_raw": chapter_number_raw,
-            "chapter_name": chapter_name,
+            "chapter_number": chapter_index,
+            "chapter_title": chapter_title,
             "text": actual_text,
             "score": float(dot_products[chunk_index]),
             "book_progress_percent": book_progress,

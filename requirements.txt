@@ -7,3 +7,4 @@ typing
 pydantic
 google-cloud-aiplatform
 google-genai
+bs4

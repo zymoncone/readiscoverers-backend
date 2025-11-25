@@ -51,3 +51,7 @@ test.py
 /temp/*.txt
 /temp/*.pkl
 /temp/*.json
+/temp/*.html
+/temp/*.csv
+/notebooks/ignore_test.ipynb
+/notebooks/*.html

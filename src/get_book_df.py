@@ -9,8 +9,8 @@ import requests
 from google.genai.types import EmbedContentConfig
 
 from .constants import EMBEDDING_MODEL_ID, TEMP_DIR, COLUMN_NAMES
-
-# split with overlap chunking
+from .parse_html import parse_html_book
+from .parse_txt import parse_txt_book
 
 
 def embed_fn(title: str, text: str, client) -> Union[dict, None]:
@@ -30,7 +30,7 @@ def embed_fn(title: str, text: str, client) -> Union[dict, None]:
         config=EmbedContentConfig(task_type="RETRIEVAL_DOCUMENT", title=title),
     )
 
-    return response.embeddings[0].values
+    return response.embeddings[0].values if response.embeddings else None
 
 
 def apply_embeddings(df: pd.DataFrame, client) -> Union[pd.DataFrame, None]:
@@ -53,96 +53,182 @@ def apply_embeddings(df: pd.DataFrame, client) -> Union[pd.DataFrame, None]:
     return df
 
 
+def download_file(url: str, local_filename: str) -> dict:
+    """Download a file from URL to local workspace.
+
+    Args:
+        url: The URL of the text file to download
+        local_filename: The local filename to save the downloaded file as
+    Returns:
+        A dict with 'status' and either 'file' path or error 'message'
+    """
+    if url is None or not url.endswith(".txt") and not url.endswith(".html"):
+        return {
+            "status": "error",
+            "message": "A valid .txt or .html URL must be provided.",
+        }
+
+    file_extension = ".html" if url.endswith(".html") else ".txt"
+
+    if os.environ.get("ENV") == "dev":
+        print(f"Determined file extension: {file_extension}")
+
+    # Remove any file extension from local_filename
+    local_filename_cleaned = re.sub(r"\.[^./\\]+$", "", local_filename)
+    filename_ext = f"{local_filename_cleaned}{file_extension}"
+
+    try:
+        # Check if 'temp' exists as a file and remove it
+        if os.path.exists(TEMP_DIR) and os.path.isfile(TEMP_DIR):
+            os.remove(TEMP_DIR)
+
+        # Create temp directory
+        os.makedirs(TEMP_DIR, exist_ok=True)
+
+        # Construct full path with temp/ directory
+        filepath = os.path.join(TEMP_DIR, filename_ext)
+
+        response = requests.get(url, timeout=60)  # 60 second timeout
+        response.raise_for_status()  # Raise error if download fails
+
+        with open(filepath, "w", encoding="utf-8") as f:
+            f.write(response.text)
+
+        if os.environ.get("ENV") == "dev":
+            print(f"Downloaded {filepath}")
+        return {"status": "success", "filepath": filepath}
+    except requests.RequestException as e:
+        return {
+            "status": "error",
+            "message": f"Error downloading {filename_ext}: {str(e)}",
+        }
+    except IOError as e:
+        return {
+            "status": "error",
+            "message": f"Error writing file {filename_ext}: {str(e)}",
+        }
+
+
 class ChunkProcessor:
-    """Class to process book chunks with various chunking strategies."""
+    """Class to process book chapters into chunks with various chunking strategies."""
 
     def __init__(
         self,
-        local_filename: str,
         target_chunk_size: int,
         sentence_overlap: int,
         small_paragraph_length: int,
         small_paragraph_overlap: int,
     ):
-        self.local_filename = local_filename
         self.target_chunk_size = target_chunk_size
         self.sentence_overlap = sentence_overlap
         self.small_paragraph_length = small_paragraph_length
         self.small_paragraph_overlap = small_paragraph_overlap
         self.processed_chunks = []
-        self.chunk = ""
-        self.full_title = None
-        self.chapter_index = None
-        self.chunk_index = 0
-        self.chunking_style = None
 
-    def download_file(self, url: str) -> dict:
-        """Download a file from URL to local workspace.
+    def chunk_chapter(
+        self, chapter_index: int, chapter_title: str, content: str
+    ) -> None:
+        """Process a single chapter's content into chunks.
 
         Args:
-            url: The URL of the text file to download
-            local_filename: The filename to save the downloaded content as
-
-        Returns:
-            A dict with 'status' and either 'file' path or error 'message'
+            chapter_index: The index of the chapter
+            chapter_title: The full title of the chapter
+            content: The paragraph content joined with \\n\\n
         """
-        if url is None or not url.endswith(".txt"):
-            return {
-                "status": "error",
-                "message": "A valid .txt URL must be provided.",
-            }
+        # Split content back into paragraphs
+        if os.environ.get("ENV") == "dev":
+            print(f"Chunking Chapter {chapter_index}: '{chapter_title}'")
+        paragraph_chunks = [p.strip() for p in content.split("\n\n") if p.strip()]
 
-        # Remove any file extension from local_filename
-        self.local_filename = re.sub(r"\.[^./\\]+$", "", self.local_filename)
+        new_chunk_starter_text = f"From Chapter {chapter_index} {chapter_title}: "
+        chunk = new_chunk_starter_text
+        chunk_index = 0
+        chunking_style = None
 
-        filename_ext = f"{self.local_filename}.txt"
+        for paragraph in paragraph_chunks:
+            # If current paragraph is large AND we have accumulated content, save current chunk first
+            if len(paragraph) >= self.target_chunk_size and len(chunk) > len(
+                new_chunk_starter_text
+            ):
+                self._write_chunk(
+                    chapter_index, chapter_title, chunk_index, chunk, chunking_style
+                )
+                chunk_index += 1
+                chunk = new_chunk_starter_text
+                chunking_style = None
 
-        try:
-            # Check if 'temp' exists as a file and remove it
-            if os.path.exists(TEMP_DIR) and os.path.isfile(TEMP_DIR):
-                os.remove(TEMP_DIR)
+            # Handle large paragraphs that need sentence-level splitting
+            if len(paragraph) >= self.target_chunk_size:
+                chunk, chunk_index = self._process_large_paragraph(
+                    chapter_index,
+                    chapter_title,
+                    chunk_index,
+                    chunk,
+                    paragraph,
+                    new_chunk_starter_text,
+                )
+                chunking_style = None
+            else:
+                # Small paragraph - add to accumulating chunk
+                if chunking_style != "multi_paragraph_chunk_with_overlap":
+                    chunking_style = "multi_paragraph_chunk_no_overlap"
+                chunk += paragraph + "\n\n"
 
-            # Create temp directory
-            os.makedirs(TEMP_DIR, exist_ok=True)
+                # Check if accumulated chunk has reached target size
+                if len(chunk.replace("\n\n", " ").strip()) >= self.target_chunk_size:
+                    chunk, chunk_index, chunking_style = (
+                        self._write_multiparagraph_chunk(
+                            chapter_index,
+                            chapter_title,
+                            chunk_index,
+                            chunk,
+                            chunking_style,
+                            new_chunk_starter_text,
+                        )
+                    )
 
-            # Construct full path with temp/ directory
-            filepath = os.path.join(TEMP_DIR, filename_ext)
+        # Save any remaining chunk content at end of chapter
+        if len(chunk) > len(new_chunk_starter_text):
+            self._write_chunk(
+                chapter_index, chapter_title, chunk_index, chunk, chunking_style
+            )
 
-            response = requests.get(url, timeout=60)  # 60 second timeout
-            response.raise_for_status()  # Raise error if download fails
-
-            with open(filepath, "w", encoding="utf-8") as f:
-                f.write(response.text)
-
-            if os.environ.get("ENV") == "dev":
-                print(f"Downloaded {filepath}")
-            return {"status": "success", "file": filepath}
-        except requests.RequestException as e:
-            return {
-                "status": "error",
-                "message": f"Error downloading {filename_ext}: {str(e)}",
-            }
-        except IOError as e:
-            return {
-                "status": "error",
-                "message": f"Error writing file {filename_ext}: {str(e)}",
-            }
-
-    def write_multiparagraph_chunk(self, new_chunk_starter_text: str) -> None:
-        """Write the current multi-paragraph chunk and reset state for next chunk."""
+    def _write_chunk(
+        self,
+        chapter_index: int,
+        chapter_title: str,
+        chunk_index: int,
+        chunk: str,
+        chunking_style: str,
+    ) -> None:
+        """Write a single chunk to processed_chunks."""
         self.processed_chunks.append(
             (
-                int(self.chapter_index),
-                f"{self.full_title} ({self.chunk_index})",
-                len(self.chunk.replace("\n\n", " ").strip()),
-                self.chunking_style,
-                self.chunk.strip(),
+                int(chapter_index),
+                f"{chapter_title} ({chunk_index})",
+                len(chunk.replace("\n\n", " ").strip()),
+                chunking_style,
+                chunk.strip(),
             )
         )
 
+    def _write_multiparagraph_chunk(
+        self,
+        chapter_index: int,
+        chapter_title: str,
+        chunk_index: int,
+        chunk: str,
+        chunking_style: str,
+        new_chunk_starter_text: str,
+    ) -> tuple:
+        """Write multi-paragraph chunk with overlap and return new chunk state."""
+        self._write_chunk(
+            chapter_index, chapter_title, chunk_index, chunk, chunking_style
+        )
+
         # Get paragraphs from the chunk we just saved for overlap
-        saved_chunk_paragraphs = [p for p in self.chunk.split("\n\n") if p.strip()]
-        self.chunk = new_chunk_starter_text
+        saved_chunk_paragraphs = [p for p in chunk.split("\n\n") if p.strip()]
+        new_chunk = new_chunk_starter_text
 
         # Add small paragraphs from end of previous chunk as overlap
         paragraph_index = 1
@@ -159,296 +245,106 @@ class ChunkProcessor:
                 saved_chunk_paragraphs[-paragraph_index].strip() + "\n\n"
             )
             paragraph_index += 1
-            if (
-                os.environ.get("ENV") == "dev"
-                and paragraph_index > self.small_paragraph_overlap
-            ):
-                print(
-                    f"Reached paragraph overlap limit of {self.small_paragraph_overlap}."
-                )
 
         if small_paragraph_chunks:
             small_paragraph_chunks.reverse()
-            self.chunk += "".join(small_paragraph_chunks)
+            new_chunk += "".join(small_paragraph_chunks)
 
-        self.chunking_style = (
+        new_chunking_style = (
             "multi_paragraph_chunk_with_overlap"
             if paragraph_index > 1
             else "multi_paragraph_chunk_no_overlap"
         )
-        self.chunk_index += 1
 
-    def read_book_to_chunks(self) -> pd.DataFrame:
-        """Read a book file and split it into chunks by chapter.
+        return new_chunk, chunk_index + 1, new_chunking_style
+
+    def _process_large_paragraph(
+        self,
+        chapter_index: int,
+        chapter_title: str,
+        chunk_index: int,
+        current_chunk: str,
+        paragraph: str,
+        new_chunk_starter_text: str,
+    ) -> tuple:
+        """Process a large paragraph by splitting into sentences."""
+        if os.environ.get("ENV") == "dev":
+            print(f"Splitting large paragraph of size {len(paragraph)} into sentences.")
+
+        has_accumulated_content = len(current_chunk) > len(new_chunk_starter_text)
+
+        if has_accumulated_content:
+            chunking_style = "sub_chunk_with_paragraph_and_sentence_overlap"
+        else:
+            chunking_style = "sub_chunk_with_sentence_overlap"
+
+        # Split paragraph into sentences
+        sentences = re.split(r"(?<=[.!?]) +", paragraph)
+        sentence_index = 0
+        overlap_adjusted = False
+        end_of_paragraph = False
+
+        while sentence_index < len(sentences):
+            sub_chunk = new_chunk_starter_text
+            chunk_size = self.target_chunk_size
+
+            if has_accumulated_content:
+                chunk_size -= len(current_chunk)
+                sub_chunk = current_chunk
+                has_accumulated_content = False
+
+            sentences_added = 0
+            while len(sub_chunk) < chunk_size:
+                sub_chunk += sentences[sentence_index] + " "
+                sentence_index += 1
+                sentences_added += 1
+                if sentence_index >= len(sentences):
+                    end_of_paragraph = True
+                    break
+
+            if end_of_paragraph:
+                sub_chunk += "\n\n"
+
+            if not overlap_adjusted and end_of_paragraph:
+                chunking_style = "single_paragraph_chunk_no_overlap"
+
+            self._write_chunk(
+                chapter_index, chapter_title, chunk_index, sub_chunk, chunking_style
+            )
+            chunk_index += 1
+
+            if end_of_paragraph:
+                break
+
+            # prevent going back to exact same position creating infinite loop
+            previous_sentence_index = sentence_index - sentences_added
+            # Move back by overlap amount for next sub-chunk
+            sentence_index = max(
+                0, previous_sentence_index + 1, sentence_index - self.sentence_overlap
+            )
+            overlap_adjusted = True
+
+        return new_chunk_starter_text, chunk_index
+
+    def process_book(self, book_data: dict) -> pd.DataFrame:
+        """Process all chapters from parsed book data into chunks.
 
         Args:
-            local_filename: Name of the book file to process
-            chunk_size: Maximum size of each text chunk
+            book_data: Dict with 'title', 'author', and 'chapters' list
 
         Returns:
-            DataFrame with columns: chapter_index, title, text
+            DataFrame with chunked content
         """
-        # pylint: disable=too-many-locals, too-many-branches, too-many-statements
-        filepath = os.path.join(TEMP_DIR, f"{self.local_filename}.txt")
-        with open(filepath, encoding="utf-8", errors="ignore") as f:
-            book = f.read()
+        self.processed_chunks = []  # Reset for new book
 
-        # Find the start of the actual content
-        intro_matches = list(re.finditer(r"Introduction", book))
-
-        if len(intro_matches) >= 2:
-            start_pos = intro_matches[1].start()
-        else:
-            start_pos = (
-                intro_matches[0].start()
-                if intro_matches
-                else re.search(
-                    r"\*\*\*\s*START OF(.*?)\*\*\*", book, re.IGNORECASE
-                ).start()
-            )
-
-        if os.environ.get("ENV") == "dev":
-            print("Start pos:", start_pos)
-
-        end_match = re.search(r"\*\*\*\s*END OF(.*?)\*\*\*", book, re.IGNORECASE)
-        end_pos = end_match.start() if end_match else len(book)
-
-        if os.environ.get("ENV") == "dev":
-            print("End pos:", end_pos)
-
-        content = book[start_pos:end_pos]
-
-        # Pattern to match chapter headings with number and name
-        # Try two patterns:
-        # 1. Title below chapter number: "CHAPTER 1\nThe Title"
-        # 2. Title above chapter number: "The Title\n\nCHAPTER 1"
-
-        # Pattern 1: Title below (like "CHAPTER 1\nThe Title")
-        chapter_pattern_below = (
-            r"^Chapter\s+((?:[IVXLCDM]+|\d+|One|Two|Three|Four|Five|Six|Seven|Eight|"
-            r"Nine|Ten|Eleven|Twelve|Thirteen|Fourteen|Fifteen|Sixteen|Seventeen|"
-            r"Eighteen|Nineteen|Twenty))\s*\n(.+?)$"
-        )
-
-        # Pattern 2: Title above (like "The Title\n\nCHAPTER 1")
-        chapter_pattern_above = (
-            r"^([A-Z][A-Za-z\s]{2,50})\s*\n+\s*Chapter\s+((?:[IVXLCDM]+|\d+|One|Two|"
-            r"Three|Four|Five|Six|Seven|Eight|Nine|Ten|Eleven|Twelve|Thirteen|"
-            r"Fourteen|Fifteen|Sixteen|Seventeen|Eighteen|Nineteen|Twenty))\s*$"
-        )
-
-        # Try pattern 1 first (title below - most common)
-        chapter_matches = list(
-            re.finditer(
-                chapter_pattern_below, content, flags=re.MULTILINE | re.IGNORECASE
-            )
-        )
-        title_position = "below"  # Track which pattern matched
-
-        # If no matches, try pattern 2 (title above)
-        if not chapter_matches:
-            chapter_matches = list(
-                re.finditer(
-                    chapter_pattern_above, content, flags=re.MULTILINE | re.IGNORECASE
-                )
-            )
-            title_position = "above"
-
-        if not chapter_matches:
-            print("NO CHAPTERS FOUND. Check the chapter pattern or the book format.")
-            return pd.DataFrame(columns=COLUMN_NAMES)
-
-        # Extract text between chapters
-        for chapter_index, match in enumerate(chapter_matches):
-            chapter_start = match.start()
-            self.chapter_index = chapter_index + 1
-
-            # Extract chapter number and name based on which pattern matched
-            if title_position == "above":
-                chapter_name = match.group(1).strip()
-                chapter_number_raw = match.group(2).strip()
-            else:  # below
-                chapter_number_raw = match.group(1).strip()
-                chapter_name = match.group(2).strip()
-
-            new_chunk_starter_text = (
-                f"From Chapter {chapter_number_raw} {chapter_name}: "
-            )
-            self.full_title = f"Chapter {chapter_number_raw}: {chapter_name}"
-
-            if os.environ.get("ENV") == "dev":
-                print(f"Found chapter: {self.full_title}")
-
-            # Get the text until the next chapter (or end of content)
-            if self.chapter_index < len(chapter_matches):
-                chapter_end = chapter_matches[self.chapter_index].start()
-            else:
-                chapter_end = len(content)
-
-            # Get the raw chapter text
-            chapter_text = content[chapter_start:chapter_end].strip()
-
-            # Remove the chapter heading from the beginning of the text
-            # This removes "CHAPTER 1\nA TERRIBLE LOSS\n\n" from the start
-            heading_pattern = (
-                r"^Chapter\s+(?:[IVXLCDM]+|\d+|One|Two|Three|Four|Five|Six|Seven|Eight|"
-                r"Nine|Ten|Eleven|Twelve|Thirteen|Fourteen|Fifteen|Sixteen|Seventeen|"
-                r"Eighteen|Nineteen|Twenty)\s*\n.+?\n+"
-            )
-            chapter_text_without_heading = re.sub(
-                heading_pattern,
-                "",
-                chapter_text,
-                count=1,
-                flags=re.IGNORECASE,
-            ).strip()
-
-            paragraph_chunks = [
-                p.replace(
-                    "\n", " "
-                ).strip()  # replace newlines within paragraphs with spaces
-                for p in chapter_text_without_heading.split("\n\n")
-                if p.strip()
-            ]
-
-            self.chunk = new_chunk_starter_text
-            self.chunk_index = 0
-            multi_paragraph_chunking_in_progress = False
-
-            for paragraph in paragraph_chunks:
-
-                # If current paragraph is large AND we have accumulated content, save current chunk first
-                if (
-                    len(paragraph) >= self.target_chunk_size
-                    and multi_paragraph_chunking_in_progress
-                    and len(self.chunk) > len(new_chunk_starter_text)
-                ):
-                    self.write_multiparagraph_chunk(new_chunk_starter_text)
-                    multi_paragraph_chunking_in_progress = False
-                    if os.environ.get("ENV") == "dev":
-                        print(
-                            "Saved accumulated chunk before processing large paragraph."
-                        )
-
-                # Handle large paragraphs that need sentence-level splitting
-                if len(paragraph) >= self.target_chunk_size:
-                    if os.environ.get("ENV") == "dev":
-                        print(
-                            f"Splitting large paragraph of size {len(paragraph)} into sentences."
-                        )
-                    multi_paragraph_chunking_in_progress = False
-                    end_of_paragraph = False
-
-                    # Check if we have accumulated content to include in first sub-chunk
-                    has_accumulated_content = len(self.chunk) > len(
-                        new_chunk_starter_text
-                    )
-                    if has_accumulated_content:
-                        add_previous_paragraphs_to_first_chunk = True
-                        self.chunking_style = (
-                            "sub_chunk_with_paragraph_and_sentence_overlap"
-                        )
-                    else:
-                        add_previous_paragraphs_to_first_chunk = False
-                        self.chunking_style = "sub_chunk_with_sentence_overlap"
-
-                    # Split paragraph into sentences
-                    sentences = re.split(
-                        r"(?<=[.!?]) +", paragraph
-                    )  # maybe do better sentence splitting later
-                    sentence_index = 0
-                    overlap_adjusted = False
-                    while sentence_index < len(sentences):
-                        sub_chunk = new_chunk_starter_text
-                        chunk_size = self.target_chunk_size
-
-                        if add_previous_paragraphs_to_first_chunk:
-                            chunk_size -= len(
-                                self.chunk
-                            )  # adjust for existing chunk content
-                            sub_chunk = self.chunk
-                            add_previous_paragraphs_to_first_chunk = False
-
-                        while len(sub_chunk) < chunk_size:
-                            sub_chunk += sentences[sentence_index] + " "
-                            sentence_index += 1
-                            if sentence_index >= len(sentences):
-                                # Indicate end of paragraph
-                                end_of_paragraph = True
-                                break
-
-                        if end_of_paragraph:
-                            sub_chunk += "\n\n"
-
-                        if not overlap_adjusted and end_of_paragraph:
-                            self.chunking_style = "single_paragraph_chunk_no_overlap"
-
-                        self.processed_chunks.append(
-                            (
-                                int(self.chapter_index),
-                                f"{self.full_title} ({self.chunk_index})",
-                                len(sub_chunk.replace("\n\n", " ").strip()),
-                                self.chunking_style,
-                                sub_chunk.strip(),
-                            )
-                        )
-                        self.chunk_index += 1
-
-                        if end_of_paragraph:
-                            break
-
-                        # Move back by overlap amount for next sub-chunk
-                        sentence_index = max(0, sentence_index - self.sentence_overlap)
-                        overlap_adjusted = True
-
-                    self.chunk = new_chunk_starter_text
-
-                else:
-                    # Small paragraph - add to accumulating chunk
-                    multi_paragraph_chunking_in_progress = True
-                    if self.chunking_style != "multi_paragraph_chunk_with_overlap":
-                        self.chunking_style = "multi_paragraph_chunk_no_overlap"
-                    self.chunk += paragraph + "\n\n"
-
-                    # Check if accumulated chunk has reached target size
-                    if (
-                        len(self.chunk.replace("\n\n", " ").strip())
-                        >= self.target_chunk_size
-                    ):
-                        self.write_multiparagraph_chunk(new_chunk_starter_text)
-
-            # Save any remaining chunk content at end of chapter
-            if len(self.chunk) > len(new_chunk_starter_text):
-                self.processed_chunks.append(
-                    (
-                        int(self.chapter_index),
-                        f"{self.full_title} ({self.chunk_index})",
-                        len(self.chunk.replace("\n\n", " ").strip()),
-                        self.chunking_style,
-                        self.chunk.strip(),
-                    )
-                )
-
-        # Add introduction if it exists before first chapter
-        if chapter_matches and intro_matches:
-            intro_text = (
-                content[: chapter_matches[0].start()]
-                .replace("Introduction", "")
-                .replace("\n", " ")
-                .strip()
-            )
-            # TODO: do the same chunking for intro as for chapters
-            if len(intro_text) > 100:
-                self.processed_chunks.insert(
-                    0, (0, "Introduction", len(intro_text), None, intro_text)
-                )
+        for chapter in book_data["chapters"]:
+            self.chunk_chapter(chapter["index"], chapter["title"], chapter["content"])
 
         if os.environ.get("ENV") == "dev":
             print(f"Number of chunks: {len(self.processed_chunks)}")
 
         df = pd.DataFrame(self.processed_chunks)
         df.columns = COLUMN_NAMES
-
         return df
 
 
@@ -460,7 +356,7 @@ def get_book_df(
     small_paragraph_length: int = 200,
     small_paragraph_overlap: int = 2,
     client=None,
-) -> Union[pd.DataFrame, dict]:
+) -> dict:
     """Download and process a book into a DataFrame of chunks with embeddings."""
     if url is None or local_filename is None:
         return {
@@ -468,32 +364,61 @@ def get_book_df(
             "message": "URL and local filename must be provided.",
         }
 
+    # Download file
+    download_result = download_file(url, local_filename)
+    if download_result["status"] == "error":
+        return download_result
+
+    filepath = download_result["filepath"]
+    with open(filepath, encoding="utf-8", errors="ignore") as f:
+        book_contents = f.read()
+
+    # Parse based on file extension
+    if filepath.endswith(".html"):
+        book_data = parse_html_book(book_contents)
+    elif filepath.endswith(".txt"):
+        book_data = parse_txt_book(book_contents)
+    else:
+        return {
+            "status": "error",
+            "message": f"Unsupported file type: {filepath}",
+        }
+
+    if not book_data or not book_data.get("chapters"):
+        return {
+            "status": "error",
+            "message": "No chapters found in book. Check parsing logic.",
+        }
+
+    # Chunk the parsed book
     chunk_processor = ChunkProcessor(
-        local_filename,
         target_chunk_size,
         sentence_overlap,
         small_paragraph_length,
         small_paragraph_overlap,
     )
-    response = chunk_processor.download_file(url)
+    df = chunk_processor.process_book(book_data)
 
-    if response["status"] == "error":
-        return response
+    if df.empty:
+        return {
+            "status": "error",
+            "message": "No chunks generated. Check chunking logic.",
+        }
+
+    # Apply embeddings
     if client is None:
         return {
             "status": "error",
             "message": "GenAI client must be provided.",
         }
 
-    data = apply_embeddings(
-        chunk_processor.read_book_to_chunks(),
-        client,
-    )
+    data = apply_embeddings(df, client)
     if data is None:
         return {
             "status": "error",
-            "message": "No data to process after reading book. Check parsing logic.",
+            "message": "Error applying embeddings.",
         }
+
     return {
         "status": "success",
         "data": data,
