@@ -133,7 +133,7 @@ def parse_txt_book(text_file: str) -> dict:
         )
 
     return {
-        "title": "Unknown",
-        "author": "Unknown",
+        "title": "Unknown Title",
+        "author": "Unknown Author",
         "chapters": chapters,
     }

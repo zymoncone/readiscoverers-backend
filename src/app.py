@@ -126,28 +126,40 @@ async def book_data(req: BookDataRequest):
     if response["status"] == "error":
         return response
 
-    df = response["data"]
+    df = response["book_data"]
+
+    if book_title := response.get("book_title"):
+        filename = book_title.replace(" ", "_").lower()
+    else:
+        filename = req.local_filename
 
     # Save both the dataframe AND metadata
     os.makedirs(TEMP_DIR, exist_ok=True)
-    df.to_pickle(f"{TEMP_DIR}/{req.local_filename}.pkl")
+    df.to_pickle(f"{TEMP_DIR}/{filename}.pkl")
 
     if os.environ.get("ENV") == "dev":
         print("Saving CSV for debugging purposes.")
-        df.to_csv(f"{TEMP_DIR}/{req.local_filename}.csv", index=False)
-
+        df.to_csv(f"{TEMP_DIR}/{filename}.csv", index=False)
     # Save chunking metadata separately
     metadata = {
         "target_chunk_size": req.target_chunk_size,
         "sentence_overlap": req.sentence_overlap,
         "small_paragraph_length": req.small_paragraph_length,
         "small_paragraph_overlap": req.small_paragraph_overlap,
+        "book_title": response["book_title"],
+        "book_author": response["book_author"],
     }
 
-    with open(f"{TEMP_DIR}/{req.local_filename}_metadata.json", "w") as f:
+    with open(f"{TEMP_DIR}/{filename}_metadata.json", "w") as f:
         json.dump(metadata, f)
 
-    return {"status": "success", "message": "Book data processed and saved."}
+    return {
+        "status": "success",
+        "filename": filename,
+        "book_title": response["book_title"],
+        "book_author": response["book_author"],
+        "message": "Book data processed and saved.",
+    }
 
 
 @app.options("/v1/book-data")
@@ -173,7 +185,13 @@ async def search_response(req: SearchRequest):
         return {"status": "error", "message": "enhanced_query must be provided."}
 
     # Load dataframe
-    df = pd.read_pickle(f"{TEMP_DIR}/{req.local_filename}.pkl")
+    pickle_path = f"{TEMP_DIR}/{req.local_filename}.pkl"
+    if not os.path.exists(pickle_path):
+        return {
+            "status": "error",
+            "message": f"Dataframe file not found: {pickle_path}",
+        }
+    df = pd.read_pickle(pickle_path)
 
     # Load chunking metadata
     metadata_path = f"{TEMP_DIR}/{req.local_filename}_metadata.json"
@@ -181,6 +199,8 @@ async def search_response(req: SearchRequest):
     if os.path.exists(metadata_path):
         with open(metadata_path, "r") as f:
             chunking_metadata = json.load(f)
+    elif os.environ.get("ENV") == "dev":
+        print(f"Chunking metadata file not found: {metadata_path}")
 
     search_results = find_best_text_chunks(
         query=req.query,

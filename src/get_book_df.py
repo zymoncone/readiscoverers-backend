@@ -412,8 +412,8 @@ def get_book_df(
             "message": "GenAI client must be provided.",
         }
 
-    data = apply_embeddings(df, client)
-    if data is None:
+    processed_data = apply_embeddings(df, client)
+    if processed_data is None:
         return {
             "status": "error",
             "message": "Error applying embeddings.",
@@ -421,5 +421,7 @@ def get_book_df(
 
     return {
         "status": "success",
-        "data": data,
+        "book_title": book_data.get("title", "Unknown Title"),
+        "book_author": book_data.get("author", "Unknown Author"),
+        "book_data": processed_data,
     }
