@@ -65,6 +65,14 @@ def remove_page_number_hyperlinks(element: BeautifulSoup):
             a.get_text(strip=True)
         ):
             a.decompose()
+
+    for span in element_copy.find_all("span"):
+        if a := span.find("a"):
+            if a.get_text(strip=True).isdigit() or PAGE_NUMBER_TAG_PATTERN.match(
+                a.get_text(strip=True)
+            ):
+                span.decompose()
+
     return element_copy
 
 
@@ -229,6 +237,10 @@ def get_paragraph_with_dropcap(p_element: BeautifulSoup) -> str:
             return drop_cap.strip() + text
         if drop_cap := prev_sibling.get("title"):
             return drop_cap.strip() + text
+
+    # Replace multiple (x3) spaces with newlines (for centered text blocks)
+    text = re.sub(r"   +", "\n", text)
+
     return text
 
 

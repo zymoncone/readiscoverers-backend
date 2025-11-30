@@ -12,17 +12,19 @@ from .constants import EMBEDDING_MODEL_ID
 
 def find_best_text_chunks(
     query: str,
-    dataframe: pd.DataFrame,
+    combined_books_df: pd.DataFrame,
     client,
     top_k: int = 3,
     query_id: str = None,
     enhanced_query: bool = None,
     chunking_metadata: dict = None,
-) -> list[dict]:
+    context_chunks: int = 1,
+) -> dict:
     """
     Compute the distances between the query and each document in the dataframe
     using the dot product.
     """
+
     # pylint: disable=too-many-locals
     query_embedding = client.models.embed_content(
         model=EMBEDDING_MODEL_ID,
@@ -33,41 +35,76 @@ def find_best_text_chunks(
     )
 
     dot_products = np.dot(
-        np.stack(dataframe["embeddings"]), query_embedding.embeddings[0].values
+        np.stack(combined_books_df["embeddings"]), query_embedding.embeddings[0].values
     )
     # Get indices of top_k highest dot products
     top_indices = np.argsort(dot_products)[-top_k:][::-1]  # Sort descending
 
-    # Print scores for each result
-    if os.environ.get("ENV") == "dev":
-        for i, chunk_index in enumerate(top_indices, 1):
-            print(f"Result {i} - Dot product: {dot_products[chunk_index]:.4f}")
-
-    # Calculate totals for progress indicators
-    total_chunks = len(dataframe)
-
     results = []
     for similarity_score_order, chunk_index in enumerate(top_indices, 1):
-        chapter_title = str(dataframe.iloc[chunk_index]["title"])
-        chunk_text = str(dataframe.iloc[chunk_index]["text"])
-        chapter_index = int(dataframe.iloc[chunk_index]["chapter_index"])
+        row = combined_books_df.iloc[chunk_index]
 
-        chunk_in_chapter_match = re.search(r"\((\d+)\)", chapter_title)
-        if chunk_in_chapter_match and chunk_in_chapter_match.group(1).isdigit():
-            chunk_in_chapter_index = int(chunk_in_chapter_match.group(1))
+        chapter_title = str(row["title"])
+        chapter_index = int(row["chapter_index"])
+        filename = row["filename"]
+        book_chunk_index = int(row["book_chunk_index"])
+        book_chunk_length = int(row["book_chunk_length"])
+        book_title = str(row["book_title"])
+        book_author = str(row["book_author"])
+
+        # Get surrounding chunks for context
+        book_df = combined_books_df[combined_books_df["filename"] == filename]
+
+        # Get context window (previous and next chunks)
+        start_idx = max(0, book_chunk_index - context_chunks)
+        end_idx = min(len(book_df), book_chunk_index + context_chunks + 1)
+
+        context_rows = book_df.iloc[start_idx:end_idx]
+
+        # Build context with highlight markers
+        matched_texts = []
+        for _, ctx_row in context_rows.iterrows():
+            ctx_text = str(ctx_row["text"])
+            # Extract actual text content
+            text_match = re.search(r"From Chapter\s+.+?:\s*(.+)", ctx_text, re.DOTALL)
+            if text_match:
+                ctx_text = text_match.group(1).strip()
+
+            # Remove double-double quotes (pandas CSV escaping artifact)
+            ctx_text = ctx_text.replace('""', '"')
+
+            if ctx_row["book_chunk_index"] == book_chunk_index:
+                # This is the highlighted chunk
+                matched_texts.append(
+                    {
+                        "chunk_index": int(ctx_row["book_chunk_index"]),
+                        "text": ctx_text,
+                        "is_match": True,
+                    }
+                )
+            else:
+                matched_texts.append(
+                    {
+                        "chunk_index": int(ctx_row["book_chunk_index"]),
+                        "text": ctx_text,
+                        "is_match": False,
+                    }
+                )
+
+        # Calculate progress based on book-specific values
+        book_progress = round((book_chunk_index + 1) / book_chunk_length * 100, 1)
+
+        chunk_in_chapter_match = re.search(r"(.*)\((\d+)\)", chapter_title)
+        if chunk_in_chapter_match and chunk_in_chapter_match.group(2).isdigit():
+            chunk_in_chapter_index = int(chunk_in_chapter_match.group(2))
+            chapter_title = chunk_in_chapter_match.group(1).strip()
         else:
             chunk_in_chapter_index = None
 
-        # Extract actual text content (everything after "From Chapter ... : ")
-        text_match = re.search(r"From Chapter\s+.+?:\s*(.+)", chunk_text, re.DOTALL)
-        if text_match:
-            actual_text = str(text_match.group(1).strip())
-        else:
-            # If pattern doesn't match, use full text
-            actual_text = str(chunk_text)
-
         # Calculate progress indicators
-        book_progress = round((int(chunk_index) / total_chunks) * 100, 1)
+        book_progress = round(
+            (book_chunk_index + 1) / book_chunk_length * 100, 1
+        )  # total chunks should be book length
 
         result = {
             # For logging/tracking
@@ -75,15 +112,18 @@ def find_best_text_chunks(
             "query": query,
             "enhanced_query": enhanced_query,
             # Results data
-            "chunk_index": int(chunk_index),
-            "chapter_index": chapter_index,
+            "chunk_index": book_chunk_index,
+            "chapter_index": chapter_index,  # can get rid of this?
             "chunk_in_chapter_index": chunk_in_chapter_index,
             "chapter_number": chapter_index,
             "chapter_title": chapter_title,
-            "text": actual_text,
+            "matched_texts": matched_texts,
             "score": float(dot_products[chunk_index]),
             "book_progress_percent": book_progress,
-            "passage_number": f"Passage {int(chunk_index) + 1} of {total_chunks}",
+            "passage_number": f"Passage {book_chunk_index + 1} of {book_chunk_length}",
+            "book_title": book_title,
+            "book_author": book_author,
+            "filename": filename,
         }
 
         # Add chunking metadata if provided
@@ -92,4 +132,4 @@ def find_best_text_chunks(
 
         results.append({"score_order": int(similarity_score_order), "data": result})
 
-    return results
+    return {"status": "success", "search_results": results}

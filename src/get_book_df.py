@@ -419,9 +419,19 @@ def get_book_df(
             "message": "Error applying embeddings.",
         }
 
+    # Create chapter metadata for this book
+    book_title = book_data.get("title")
+    book_author = book_data.get("author")
+    filename = book_title.replace(" ", "_").lower() if book_title else local_filename
+
+    # cleanup downloaded file
+    if os.path.exists(filepath):
+        os.remove(filepath)
+
     return {
         "status": "success",
-        "book_title": book_data.get("title", "Unknown Title"),
-        "book_author": book_data.get("author", "Unknown Author"),
+        "book_title": book_title,
+        "book_author": book_author,
+        "filename": filename,
         "book_data": processed_data,
     }

@@ -36,8 +36,10 @@ TITLE_BEFORE_CHAPTER_PATTERN = re.compile(
     re.IGNORECASE,
 )
 
-# Page number tag pattern, i.e., [page 12] or [pg. 12]
-PAGE_NUMBER_TAG_PATTERN = re.compile(r"\[?\s*(?:page|pg)\.?\s*\d+\s*\]?", re.IGNORECASE)
+# Page number tag pattern, i.e., [page 12], [pg. 12], or [12]
+PAGE_NUMBER_TAG_PATTERN = re.compile(
+    r"\[?\s*(?:(?:page|pg)\.?\s*)?\d+\s*\]?", re.IGNORECASE
+)
 
 # "CHAPTER [number]" only - look for subtitle in siblingxw
 CHAPTER_ONLY_PATTERN = re.compile(

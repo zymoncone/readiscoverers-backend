@@ -2,6 +2,7 @@
 
 import os
 import json
+import uuid
 
 from pydantic import BaseModel
 from fastapi import FastAPI, Request, Response
@@ -61,7 +62,7 @@ class SearchRequest(BaseModel):
 
     # pylint: disable=too-few-public-methods
     query: str = None
-    local_filename: str = None
+    filenames: list[str] = []
     top_k: int = 3
     query_id: str = None
     enhanced_query: bool = None
@@ -72,7 +73,6 @@ class BookDataRequest(BaseModel):
 
     # pylint: disable=too-few-public-methods
     url: str = None
-    local_filename: str = None
     target_chunk_size: int = 800
     sentence_overlap: int = 2
     small_paragraph_length: int = 200
@@ -96,8 +96,6 @@ async def options_root():
 @app.post("/v1/book-data")
 async def book_data(req: BookDataRequest):
     """Download and process a book from URL into chunks with embeddings."""
-    if req.local_filename is None:
-        return {"status": "error", "message": "local_filename must be provided."}
     if not client:
         return {"status": "error", "message": "GenAI client is not initialized."}
     if any(
@@ -114,9 +112,10 @@ async def book_data(req: BookDataRequest):
             "message": "All chunking parameters must be positive integers.",
         }
 
+    book_uuid = str(uuid.uuid4())  # Generate UUID
     response = get_book_df(
         url=req.url,
-        local_filename=req.local_filename,
+        local_filename=book_uuid,  # Change to random UUID filename
         target_chunk_size=int(req.target_chunk_size),
         sentence_overlap=int(req.sentence_overlap),
         small_paragraph_length=int(req.small_paragraph_length),
@@ -127,11 +126,9 @@ async def book_data(req: BookDataRequest):
         return response
 
     df = response["book_data"]
-
-    if book_title := response.get("book_title"):
-        filename = book_title.replace(" ", "_").lower()
-    else:
-        filename = req.local_filename
+    filename = response["filename"]
+    book_title = response.get("book_title", "Unknown Title")
+    book_author = response.get("book_author", "Unknown Author")
 
     # Save both the dataframe AND metadata
     os.makedirs(TEMP_DIR, exist_ok=True)
@@ -139,15 +136,15 @@ async def book_data(req: BookDataRequest):
 
     if os.environ.get("ENV") == "dev":
         print("Saving CSV for debugging purposes.")
-        df.to_csv(f"{TEMP_DIR}/{filename}.csv", index=False)
+        df.to_csv(f"{TEMP_DIR}/_DEV_{filename}.csv", index=False)
     # Save chunking metadata separately
     metadata = {
         "target_chunk_size": req.target_chunk_size,
         "sentence_overlap": req.sentence_overlap,
         "small_paragraph_length": req.small_paragraph_length,
         "small_paragraph_overlap": req.small_paragraph_overlap,
-        "book_title": response["book_title"],
-        "book_author": response["book_author"],
+        "book_title": book_title,
+        "book_author": book_author,
     }
 
     with open(f"{TEMP_DIR}/{filename}_metadata.json", "w") as f:
@@ -156,8 +153,8 @@ async def book_data(req: BookDataRequest):
     return {
         "status": "success",
         "filename": filename,
-        "book_title": response["book_title"],
-        "book_author": response["book_author"],
+        "book_title": book_title,
+        "book_author": book_author,
         "message": "Book data processed and saved.",
     }
 
@@ -171,8 +168,8 @@ async def options_book_data():
 @app.post("/v1/search-response")
 async def search_response(req: SearchRequest):
     """Search for relevant passages in processed book data."""
-    if req.local_filename is None:
-        return {"status": "error", "message": "local_filename must be provided."}
+    if not req.filenames:
+        return {"status": "error", "message": "at least one filename must be provided."}
     if req.query is None:
         return {"status": "error", "message": "query must be provided."}
     if not client:
@@ -184,36 +181,67 @@ async def search_response(req: SearchRequest):
     if req.enhanced_query is None:
         return {"status": "error", "message": "enhanced_query must be provided."}
 
-    # Load dataframe
-    pickle_path = f"{TEMP_DIR}/{req.local_filename}.pkl"
-    if not os.path.exists(pickle_path):
-        return {
-            "status": "error",
-            "message": f"Dataframe file not found: {pickle_path}",
-        }
-    df = pd.read_pickle(pickle_path)
-
-    # Load chunking metadata
-    metadata_path = f"{TEMP_DIR}/{req.local_filename}_metadata.json"
+    # Load and combine dataframes from all filenames
+    combined_dfs_as_list = []
     chunking_metadata = None
-    if os.path.exists(metadata_path):
-        with open(metadata_path, "r") as f:
-            chunking_metadata = json.load(f)
-    elif os.environ.get("ENV") == "dev":
-        print(f"Chunking metadata file not found: {metadata_path}")
 
-    search_results = find_best_text_chunks(
+    # Load dataframe
+    for filename in req.filenames:
+        pickle_path = f"{TEMP_DIR}/{filename}.pkl"
+        if not os.path.exists(pickle_path):
+            return {
+                "status": "error",
+                "message": f"Dataframe file not found: {pickle_path}",
+            }
+        df = pd.read_pickle(pickle_path)
+
+        # Add book identifier and original index before combining
+        df["filename"] = filename
+        df["book_chunk_index"] = df.index  # Store original index
+        df["book_chunk_length"] = len(df)  # Store total chunks in this book
+
+        # Load chunking metadata
+        # THIS DOESNT NEED TO BE PER BOOK
+        metadata_path = f"{TEMP_DIR}/{filename}_metadata.json"
+
+        if os.path.exists(metadata_path):
+            with open(metadata_path, "r") as f:
+                chunking_metadata = json.load(f)
+
+            df["book_title"] = chunking_metadata["book_title"]
+            df["book_author"] = chunking_metadata["book_author"]
+
+            del chunking_metadata["book_title"]
+            del chunking_metadata["book_author"]
+
+        elif os.environ.get("ENV") == "dev":
+            print(f"Chunking metadata file not found: {metadata_path}")
+
+        combined_dfs_as_list.append(df)
+
+    # Combine all dataframes
+    combined_books_df = pd.concat(combined_dfs_as_list, ignore_index=True)
+
+    if os.environ.get("ENV") == "dev":
+        print(
+            f"Combined {len(combined_dfs_as_list)} dataframes with total {len(combined_books_df)} rows"
+        )
+        combined_books_df.to_csv(f"{TEMP_DIR}/_DEV_combined_books_df.csv")
+
+    response = find_best_text_chunks(
         query=req.query,
-        dataframe=df,
+        combined_books_df=combined_books_df,
         client=client,
         top_k=req.top_k,
         query_id=req.query_id,
         enhanced_query=req.enhanced_query,
         chunking_metadata=chunking_metadata,
     )
-    print(search_results)
+    if response["status"] == "error":
+        return response
 
-    return {"status": "success", "search_results": search_results}
+    print(response["search_results"])
+    return response
 
 
 @app.options("/v1/search-response")
