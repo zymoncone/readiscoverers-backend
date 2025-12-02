@@ -55,3 +55,5 @@ test.py
 /temp/*.csv
 /notebooks/ignore_test.ipynb
 /notebooks/*.html
+/notebooks/*.csv
+**/client_secrets.json
