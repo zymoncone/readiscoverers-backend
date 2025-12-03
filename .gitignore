@@ -1,3 +1,4 @@
+
 # Python
 __pycache__/
 *.py[cod]
@@ -30,6 +31,7 @@ instance/
 # Environment variables
 .env
 .flaskenv
+.env
 
 # IDE
 .vscode/
