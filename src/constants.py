@@ -11,6 +11,7 @@ COLUMN_NAMES = [
     "chunking_style",
     "text",
 ]
+LARGE_PARAGRAPH_TOLERANCE = 1.5  # 50% tolerance for large paragraphs
 
 CHAPTER_NUMBERS = (
     r"one|two|three|four|five|six|seven|eight|nine|ten|"
@@ -36,9 +37,9 @@ TITLE_BEFORE_CHAPTER_PATTERN = re.compile(
     re.IGNORECASE,
 )
 
-# Page number tag pattern, i.e., [page 12], [pg. 12], or [12]
+# Page number tag pattern, i.e., [page 12], [pg. 12], [12], or « 12 »
 PAGE_NUMBER_TAG_PATTERN = re.compile(
-    r"\[?\s*(?:(?:page|pg)\.?\s*)?\d+\s*\]?", re.IGNORECASE
+    r"\[?\s*(?:(?:page|pg)\.?\s*)?\d+\s*\]?|«\s*\d+\s*»", re.IGNORECASE
 )
 
 # "CHAPTER [number]" only - look for subtitle in siblingxw

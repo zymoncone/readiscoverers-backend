@@ -8,7 +8,12 @@ import pandas as pd
 import requests
 from google.genai.types import EmbedContentConfig
 
-from .constants import EMBEDDING_MODEL_ID, TEMP_DIR, COLUMN_NAMES
+from .constants import (
+    EMBEDDING_MODEL_ID,
+    TEMP_DIR,
+    COLUMN_NAMES,
+    LARGE_PARAGRAPH_TOLERANCE,
+)
 from .parse_html import parse_html_book
 from .parse_txt import parse_txt_book
 
@@ -273,13 +278,41 @@ class ChunkProcessor:
 
         has_accumulated_content = len(current_chunk) > len(new_chunk_starter_text)
 
+        max_acceptable_size = self.target_chunk_size * LARGE_PARAGRAPH_TOLERANCE
+
+        # If paragraph is close enough to target size, keep it whole.
+        # This prevents one sentence chunks with no context
+        if len(paragraph) <= max_acceptable_size:
+            if os.environ.get("ENV") == "dev":
+                print(
+                    f"Paragraph size {len(paragraph)} within tolerance ({max_acceptable_size}), keeping whole."
+                )
+
+            # Write the whole paragraph as a chunk
+            chunk_to_write = (
+                current_chunk + paragraph + "\n\n"
+                if has_accumulated_content
+                else new_chunk_starter_text + paragraph + "\n\n"
+            )
+            chunking_style = "single_paragraph_chunk_no_overlap"
+
+            self._write_chunk(
+                chapter_index,
+                chapter_title,
+                chunk_index,
+                chunk_to_write,
+                chunking_style,
+            )
+            return new_chunk_starter_text, chunk_index + 1
+
+        # Paragraph is too large, split into smaller chunks
         if has_accumulated_content:
             chunking_style = "sub_chunk_with_paragraph_and_sentence_overlap"
         else:
             chunking_style = "sub_chunk_with_sentence_overlap"
 
         # Split paragraph into sentences
-        sentences = re.split(r"(?<=[.!?]) +", paragraph)
+        sentences = re.split(r"(?<=[.!?])\s+(?=[A-Z])", paragraph)
         sentence_index = 0
         overlap_adjusted = False
         end_of_paragraph = False

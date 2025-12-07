@@ -31,7 +31,6 @@ instance/
 # Environment variables
 .env
 .flaskenv
-.env
 
 # IDE
 .vscode/
