@@ -1,11 +1,15 @@
 import re
 from bs4 import BeautifulSoup
+from spellchecker import SpellChecker
+
 from .constants import (
     CHAPTER_WITH_TITLE_PATTERN,
     TITLE_BEFORE_CHAPTER_PATTERN,
     PAGE_NUMBER_TAG_PATTERN,
     CHAPTER_ONLY_PATTERN,
 )
+
+spell = SpellChecker()
 
 
 def find_book_meta_data(soup, meta_key, top_n=5):
@@ -60,12 +64,15 @@ def title_case(func):
 
 def remove_page_number_hyperlinks(element: BeautifulSoup):
     element_copy = element.__copy__()
+
+    # Remove standalone <a> tags with page numbers
     for a in element_copy.find_all("a"):
         if a.get_text(strip=True).isdigit() or PAGE_NUMBER_TAG_PATTERN.match(
             a.get_text(strip=True)
         ):
             a.decompose()
 
+    # Remove <span> tags containing page number links
     for span in element_copy.find_all("span"):
         if a := span.find("a"):
             if a.get_text(strip=True).isdigit() or PAGE_NUMBER_TAG_PATTERN.match(
@@ -139,8 +146,6 @@ def extract_chapter_title_from_header(
         for keyword in [
             "project gutenberg",
             "list of chapters",
-            "to our readers",
-            "to my readers",
         ]
     ):
         return None
@@ -150,13 +155,6 @@ def extract_chapter_title_from_header(
         or text.lower() == "the end"
         or (book_title and text.lower() == book_title.lower())
         or (book_author and book_author.lower() in text.lower())
-    ):
-        return None
-
-    if (
-        text.lower().startswith("by")
-        or text.lower().startswith("author")
-        or text.lower().startswith("dedicated to")
     ):
         return None
 
@@ -222,26 +220,79 @@ def extract_subtitle(
 # paragraph extraction functions
 
 
-def get_paragraph_with_dropcap(p_element: BeautifulSoup) -> str:
-    """Extract paragraph text, including drop cap from preceding img if present."""
-    # Get the paragraph text
-    text = remove_page_number_hyperlinks(p_element).get_text(" ", strip=True)
+def fix_split_words(text: str) -> str:
+    """Fix words that were split by removed HTML tags.
+    Combines words when at least one part is invalid individually
+    but they form a valid word when combined."""
+    words = text.split()
+    fixed_words = []
+    i = 0
 
-    # Check for a preceding sibling that might contain a drop cap image
+    while i < len(words):
+        current_word = words[i]
+
+        # Check if there's a next word to potentially combine with
+        if i + 1 < len(words):
+            next_word = words[i + 1]
+            combined = current_word + next_word
+
+            # Check validity
+            current_valid = current_word.lower() in spell
+            next_valid = next_word.lower() in spell
+            combined_valid = combined.lower() in spell
+
+            # Combine if:
+            # 1. At least one part is invalid on its own
+            # 2. Combined word IS valid
+            if (not current_valid or not next_valid) and combined_valid:
+                fixed_words.append(combined)
+                i += 2
+                continue
+
+        # Don't combine - keep the word as is
+        fixed_words.append(current_word)
+        i += 1
+
+    return " ".join(fixed_words)
+
+
+def get_paragraph_with_dropcap(p_element):
+    """Extract paragraph text, including drop cap from preceding img if present."""
+
     prev_sibling = p_element.find_previous_sibling()
 
-    # If previous sibling is a div with an img that has a title (the drop cap letter)
     if prev_sibling and prev_sibling.name == "div":
         if drop_cap := get_img_text(prev_sibling, title_only=True):
-            # Prepend the drop cap to the paragraph text
-            return drop_cap.strip() + text
+            text = remove_page_number_hyperlinks(p_element).get_text(
+                " ", strip=True
+            )  # Use space separator
+            return fix_split_words(drop_cap.strip() + text)
         if drop_cap := prev_sibling.get("title"):
-            return drop_cap.strip() + text
+            text = remove_page_number_hyperlinks(p_element).get_text(
+                " ", strip=True
+            )  # Use space separator
+            return fix_split_words(drop_cap.strip() + text)
 
-    # Replace multiple (x3) spaces with newlines (for centered text blocks)
-    text = re.sub(r"   +", "\n", text)
+    if img := p_element.find("img"):
+        if drop_cap := img.get("alt"):
+            p_copy = p_element.__copy__()
+            p_copy.find("img").decompose()
+            text = remove_page_number_hyperlinks(p_copy).get_text(
+                " ", strip=True
+            )  # Use space separator
+            return fix_split_words(drop_cap.strip() + text)
 
-    return text
+    p_classes = p_element.get("class", [])
+    if any("drop" in cls.lower() for cls in p_classes):
+        text = remove_page_number_hyperlinks(p_element).get_text(
+            " ", strip=True
+        )  # Use space separator
+        return fix_split_words(text)
+
+    text = remove_page_number_hyperlinks(p_element).get_text(
+        " ", strip=True
+    )  # Use space separator
+    return fix_split_words(text)
 
 
 def extract_chapter_content(
@@ -250,6 +301,12 @@ def extract_chapter_content(
     """Extract paragraph text for each chapter based on sourceline positions."""
 
     for i, chapter in enumerate(chapters):
+        # Skip extraction if content already exists
+        if chapter.get("content"):
+            chapter["content"] = chapter["content"]
+            chapter["paragraph_count"] = chapter["paragraph_count"]
+            continue
+
         current_chapter_sourceline = chapter["sourceline"]
         next_sourceline = (
             chapters[i + 1]["sourceline"] if i + 1 < len(chapters) else None
@@ -283,6 +340,53 @@ def extract_chapter_content(
     return chapters
 
 
+def extract_preface(soup, start_sourceline, first_chapter_sourceline):
+    """Extract preface if there's a drop cap paragraph or 'To my readers' before the first chapter."""
+    if not first_chapter_sourceline:
+        return None
+
+    # Look for paragraphs with drop cap class or "To my readers" before first chapter
+    for p in soup.find_all("p"):
+        # Skip paragraphs before the book starts
+        if start_sourceline and p.sourceline < start_sourceline:
+            continue
+
+        # Stop if we've reached the first chapter
+        if p.sourceline >= first_chapter_sourceline:
+            break
+
+        # Check if paragraph has drop cap class or starts with "To my readers"
+        p_classes = p.get("class", [])
+        text = get_paragraph_with_dropcap(p)
+
+        if any("drop" in cls.lower() for cls in p_classes) or (
+            text
+            and text.lower().startswith("to my readers")
+            or (text and text.lower().startswith("dear boys and girls"))
+        ):
+            # Found a valid paragraph - extract content until next non-p element
+            content_paragraphs = []
+            current = p
+
+            while current:
+                if current.name == "p":
+                    if para_text := get_paragraph_with_dropcap(current):
+                        content_paragraphs.append(para_text.replace("\n", " "))
+                    current = current.find_next_sibling()
+                else:
+                    # Hit a non-p element, stop
+                    break
+
+            if content_paragraphs:
+                return {
+                    "title": "Preface",
+                    "content": "\n\n".join(content_paragraphs),
+                    "paragraph_count": len(content_paragraphs),
+                }
+
+    return None
+
+
 def check_sourceline_bounds(elements, start_sourceline, end_sourceline):
     for element in elements:
         if start_sourceline and element.sourceline < start_sourceline:
@@ -307,6 +411,31 @@ def parse_html_book(html_file: str) -> dict:
 
     chapters = []
     chapter_index = 1
+
+    # Find first chapter's sourceline to use as boundary
+    first_chapter_sourceline = None
+    for header in soup.find_all("h2"):
+        if chapter_info := extract_chapter_title_from_header(
+            header, book_title, book_author
+        ):
+            first_chapter_sourceline = header.sourceline
+            break
+
+    for paragraph in soup.find_all("p"):
+        if chapter_info := extract_chapter_title_from_paragraph(paragraph):
+            first_chapter_sourceline = paragraph.sourceline
+            break
+
+    for division in soup.find_all("div"):
+        if chapter_info := extract_chapter_title_from_div(division):
+            first_chapter_sourceline = division.sourceline
+            break
+
+    # Extract any preface text before chapters that won't be captured by title headers
+    if preface_section := extract_preface(
+        soup, start_sourceline, first_chapter_sourceline
+    ):
+        chapters.append(preface_section)
 
     for header in check_sourceline_bounds(
         soup.find_all("h2"), start_sourceline, end_sourceline
@@ -333,7 +462,22 @@ def parse_html_book(html_file: str) -> dict:
         return None
 
     for ch in chapters:
-        if ch["title"] == "Introduction" or ch["title"] == "Prologue":
+        starts_with_keyword = (
+            ch["title"].lower().startswith("by")
+            or ch["title"].lower().startswith("author")
+            or ch["title"].lower().startswith("dedicated to")
+        )
+        if (
+            ch["title"].lower()
+            in [
+                "to our readers",
+                "to my readers",
+                "introduction",
+                "prologue",
+                "preface",
+            ]
+            or starts_with_keyword
+        ):
             chapter_index = 0
         ch.update({"index": chapter_index})
         chapter_index += 1

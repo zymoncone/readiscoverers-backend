@@ -8,9 +8,10 @@ from bs4 import BeautifulSoup
 # Add the project root to the path
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../../"))
 from src.parse_html import get_paragraph_with_dropcap
+from src.constants import CHAPTER_NUMBERS
 
 
-def normalize_text(text):
+def normalize_text(text, lowercase: bool = True) -> str:
     # Handle NaN or None inputs
     if pd.isna(text) or text is None:
         return ""
@@ -20,7 +21,8 @@ def normalize_text(text):
 
     # Check if text contains HTML tags
     if "<p>" in text or "<" in text:
-        text = f"<p>{text}"  # adding missing <p> tag at the start
+        text = text.lstrip(">")  # removing leading '>' if present
+        text = f"<p>{text}</p>"  # adding missing <p></p> tags at the start
         soup = BeautifulSoup(text, "html.parser")
 
         # Get all paragraph elements
@@ -39,10 +41,35 @@ def normalize_text(text):
             # No p tags, just get text
             text = soup.get_text(strip=True)
 
+    # Remove page number patterns like [pg 123], [page 123], [123], « 123 »
+    text = re.sub(
+        r"\[?\s*(?:pg|page)\.?\s*\d+\s*\]?|«\s*\d+\s*»|\[\d+\]",
+        "",
+        text,
+        flags=re.IGNORECASE,
+    )
+    # Remove chapter markers at the end like "chapter 20." or "chapter twenty"
+    text = re.sub(
+        r"\s*chapter\s+(?:\d+|[ivxlcdm]+|" + CHAPTER_NUMBERS + ")\s*\.?\s*$",
+        "",
+        text,
+        flags=re.IGNORECASE,
+    )
+
     # Remove quotes
     text = re.sub(r'["‘”’“\']', "", text)
+    # Normalize ellipsis (both Unicode … and three dots ...)
+    text = re.sub(r"…|\.\.\.", "", text)
+    # Replace em dashes and other dashes with spaces to prevent word merging
+    text = re.sub(r"[—–-]", " ", text)
+    # Replace commas, found missing
+    text = re.sub(r",", "", text)
+    # # Remove all other punctuation
+    # text = re.sub(r"[.,;:!?]", "", text)
+    if lowercase:
+        text = text.lower()
     # Normalize whitespace
-    return re.sub(r"\s+", " ", text.lower().strip())
+    return re.sub(r"\s+", " ", text.strip())
 
 
 def remove_chapter_chunk_tag(text):
@@ -55,94 +82,125 @@ def remove_chapter_chunk_tag(text):
 def find_chunk_locations_with_continuity(filepath, expected_text):
     """
     Find chunks that contain the expected text with continuity across multiple chunks.
-    Uses word-by-word matching to handle text that spans chunk boundaries.
+    Matches sentence-by-sentence, skipping duplicate sentences from previous chunks.
     Returns list of chunk indices where the text spans, or empty list if not found.
     """
     temp_df = pd.read_pickle(filepath)
 
-    # Normalize and split expected text into words
-    normalized_expected = normalize_text(expected_text)
-    expected_words = normalized_expected.split()
+    def split_sentences(text):
+        """Split text into sentences. Normalizes first, then splits."""
+        # Normalize first to handle HTML, quotes, etc. consistently
+        normalized = normalize_text(text, lowercase=False)
 
-    if not expected_words:
-        print("WARNING: No words found in expected text")
+        # Split on sentence boundaries
+        sentences = re.split(r'(?<=[.!?:])\s+(?=[A-Z"])', normalized)
+
+        # Filter out empty strings
+        return [s.strip().lower() for s in sentences if s.strip()]
+
+    # Split expected text into sentences (already normalized)
+    expected_sentences = split_sentences(expected_text)
+
+    if not expected_sentences:
+        print("WARNING: No sentences found in expected text")
         return []
 
-    print(f"Looking for {len(expected_words)} words from expected text")
+    print(f"Looking for {len(expected_sentences)} sentences from expected text")
+    print(f"First expected sentence: '{expected_sentences[0]}")
 
-    # Find the chunk containing the first few words
-    first_phrase = " ".join(
-        expected_words[: min(5, len(expected_words))]
-    )  # Use first 5 words
+    # Find the chunk containing the first sentence
+    first_sentence = expected_sentences[0]
     start_chunk_idx = None
 
+    print(f"Searching for first sentence in chunks...")
+
+    # First pass: find starting chunk
     for chunk_idx, row in temp_df.iterrows():
-        chunk_text = normalize_text(remove_chapter_chunk_tag(row["text"]))
-        if first_phrase in chunk_text:
+        chunk_text = remove_chapter_chunk_tag(row["text"])
+        chunk_sentences = split_sentences(chunk_text)
+
+        if first_sentence in chunk_sentences:
             start_chunk_idx = chunk_idx
+            print(f"Found first sentence in chunk {chunk_idx}")
             break
 
     if start_chunk_idx is None:
-        print(f"WARNING: First phrase not found: '{first_phrase}'")
+        print(f"WARNING: First sentence not found in any chunk")
         return []
 
-    # Now verify continuity word by word from start_chunk_idx
+    # Second pass: verify continuity sentence-by-sentence
     matched_chunks = [start_chunk_idx]
     current_chunk_idx = start_chunk_idx
-    word_idx = 0
+    sentence_idx = 0  # Which expected sentence we're looking for
+    seen_sentences = set()  # Track sentences we've already matched
 
-    while word_idx < len(expected_words):
+    while sentence_idx < len(expected_sentences):
         if current_chunk_idx >= len(temp_df):
             print(
-                f"WARNING: Ran out of chunks at word {word_idx}/{len(expected_words)}"
+                f"WARNING: Ran out of chunks at sentence {sentence_idx}/{len(expected_sentences)}"
             )
             return []
 
-        current_text = normalize_text(
-            remove_chapter_chunk_tag(temp_df.iloc[current_chunk_idx]["text"])
+        # Get current chunk's sentences (already normalized from split_sentences)
+        raw_chunk_text = remove_chapter_chunk_tag(
+            temp_df.iloc[current_chunk_idx]["text"]
         )
-        chunk_words = current_text.split()
+        chunk_sentences = split_sentences(raw_chunk_text)
 
-        # Find where we are in the current chunk
-        words_matched_in_chunk = 0
+        # Filter out sentences we've already seen (duplicates from overlap)
+        is_first_chunk = current_chunk_idx == start_chunk_idx
+        if not is_first_chunk:
+            # Skip sentences that were in previous chunks
+            chunk_sentences = [s for s in chunk_sentences if s not in seen_sentences]
 
-        # Try to match consecutive words from expected_words starting at word_idx
-        for i in range(word_idx, len(expected_words)):
-            # Look for the current expected word in remaining chunk words
-            expected_word = expected_words[i]
+        # Add current chunk's sentences to seen set
+        seen_sentences.update(chunk_sentences)
 
-            # Create a sliding window of chunk text to find the word sequence
-            remaining_chunk_text = " ".join(chunk_words[words_matched_in_chunk:])
-
-            if expected_word in remaining_chunk_text:
-                # Find the position and advance
-                word_position = (
-                    remaining_chunk_text.split().index(expected_word)
-                    if expected_word in remaining_chunk_text.split()
-                    else -1
-                )
-                if word_position >= 0:
-                    words_matched_in_chunk += word_position + 1
-                    word_idx = i + 1
-                else:
-                    # Word is part of a larger match, just continue
-                    word_idx = i + 1
-            else:
-                # Word not found in remaining chunk text
-                break
-
-        if word_idx == 0 or words_matched_in_chunk == 0:
-            # Couldn't match any words in this chunk - continuity broken
+        if is_first_chunk:
+            print(f"First chunk {current_chunk_idx} - {len(chunk_sentences)} sentences")
+        else:
             print(
-                f"WARNING: Continuity broken at word {word_idx}: '{expected_words[word_idx] if word_idx < len(expected_words) else 'END'}'"
+                f"Chunk {current_chunk_idx} - {len(chunk_sentences)} new sentences after dedup"
             )
-            print(f"Current chunk text: {current_text}")
-            print(f"For filepath: {filepath}, chunk index: {current_chunk_idx}")
 
+        # Try to match expected sentences in this chunk
+        chunk_sentence_idx = 0
+        matched_in_this_chunk = False
+
+        while sentence_idx < len(expected_sentences) and chunk_sentence_idx < len(
+            chunk_sentences
+        ):
+            expected_sent = expected_sentences[sentence_idx]
+            chunk_sent = chunk_sentences[chunk_sentence_idx]
+
+            if expected_sent == chunk_sent:
+                # Match! Move to next expected sentence
+                sentence_idx += 1
+                chunk_sentence_idx += 1
+                matched_in_this_chunk = True
+                print(f"  ✓ Matched sentence {sentence_idx}/{len(expected_sentences)}")
+            else:
+                # No match - check if we've already matched something in this chunk
+                if matched_in_this_chunk:
+                    # We matched earlier sentences but now it broke - continuity error
+                    print(f"WARNING: Continuity broken at sentence {sentence_idx}")
+                    print(f"  Expected: '{expected_sent}'")
+                    print(f"  Got: '{chunk_sent}'")
+                    return []
+                else:
+                    # Haven't matched anything in this chunk yet, try next sentence in chunk
+                    chunk_sentence_idx += 1
+
+        # If we haven't matched anything in this chunk and it's not the first, something's wrong
+        if not matched_in_this_chunk and not is_first_chunk:
+            print(f"WARNING: No matches found in chunk {current_chunk_idx}")
+            print(
+                f"  Still looking for sentence {sentence_idx}: '{expected_sentences[sentence_idx][:100]}...'"
+            )
             return []
 
-        # If there are more words to find, move to next chunk
-        if word_idx < len(expected_words):
+        # If we still have sentences to match, move to next chunk
+        if sentence_idx < len(expected_sentences):
             current_chunk_idx += 1
             if (
                 current_chunk_idx < len(temp_df)
@@ -150,7 +208,7 @@ def find_chunk_locations_with_continuity(filepath, expected_text):
             ):
                 matched_chunks.append(current_chunk_idx)
 
-    # Successfully found all words with continuity
+    # Successfully found all sentences with continuity
     print(
         f"SUCCESS: Found text spanning {len(matched_chunks)} chunk(s): {matched_chunks}"
     )
@@ -200,6 +258,33 @@ def precompute_text_locations_in_chunks(
                 f"WARNING: Skipping row {idx} - empty/NaN text in '{text_col}' column"
             )
             print(f"  Question: {question_row.get('question', 'N/A')}")
+
+            # Return None value for the missing row
+            if use_expected_settings:
+                data.append(
+                    {
+                        "expected_chunk_index": None,
+                        "expected_chapter_number": None,
+                        "expected_chapter_title": None,
+                        "expected_chunk_in_chapter_index": None,
+                        "all_expected_chunks": [],
+                        "expected_filename": None,
+                        "excerpt_cleaned": "",
+                    }
+                )
+            else:
+                data.append(
+                    {
+                        "model_chunk_index": None,
+                        "model_chapter_number": None,
+                        "model_chapter_title": None,
+                        "model_chunk_in_chapter_index": None,
+                        "all_model_chunks": [],
+                        "model_filename": None,
+                        "excerpt_cleaned": "",
+                    }
+                )
+            continue  # Skip to next row
 
         if use_expected_settings:
             filename = question_row["Book Title"].lower().replace(" ", "_").strip()
@@ -254,6 +339,12 @@ def precompute_text_locations_in_chunks(
                 f"WARNING: No matching chunk found for question: {question_row['question']}"
             )
 
+        cleaned_text = (
+            normalize_text(question_row[text_col])
+            if not pd.isna(question_row.get(text_col))
+            else ""
+        )
+
         if use_expected_settings:
             data.append(
                 {
@@ -263,6 +354,7 @@ def precompute_text_locations_in_chunks(
                     "expected_chunk_in_chapter_index": chunk_in_chapter_index,
                     "all_expected_chunks": all_chunks,
                     "expected_filename": matched_filename,
+                    "excerpt_cleaned": cleaned_text,
                 }
             )
         else:
@@ -274,6 +366,7 @@ def precompute_text_locations_in_chunks(
                     "model_chunk_in_chapter_index": chunk_in_chapter_index,
                     "all_model_chunks": all_chunks,
                     "model_filename": matched_filename,
+                    "excerpt_cleaned": cleaned_text,
                 }
             )
 
