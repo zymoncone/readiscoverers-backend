@@ -5,6 +5,7 @@ import re
 
 import pandas as pd
 import numpy as np
+from fuzzywuzzy import fuzz
 from google.genai.types import EmbedContentConfig
 
 from .constants import EMBEDDING_MODEL_ID
@@ -18,12 +19,79 @@ def find_best_text_chunks(
     query_id: str = None,
     enhanced_query: bool = None,
     chunking_metadata: dict = None,
+    keywords: list = None,
     context_chunks: int = 1,
+    fuzzy_threshold: int = 80,
 ) -> dict:
     """
     Compute the distances between the query and each document in the dataframe
     using the dot product.
     """
+
+    # Check if query mentions a specific book title (fuzzy matching)
+    unique_books = combined_books_df["book_title"].unique()
+    matched_book = None
+    highest_score = 0
+
+    query_lower = query.lower()
+
+    if enhanced_query and keywords:
+        # Use keywords but filter out very short ones that cause false matches
+        # Only use keywords that are likely full book titles (longer phrases)
+        filtered_keywords = [kw for kw in keywords if len(kw.split()) >= 3]
+        texts_to_check = (
+            [query_lower] + [kw.lower() for kw in filtered_keywords]
+            if filtered_keywords
+            else [query_lower]
+        )
+
+    else:
+        # Extract potential book titles from the query using regex
+        title_patterns = [
+            r"In\s+([^,]+?),",  # "In The Emerald City of Oz,"
+            r"from\s+([^,]+?)[,\?]",  # "from The Emerald City of Oz,"
+            r"in\s+the\s+book\s+([^,]+?)[,\?]",  # "in the book The Emerald City of Oz"
+        ]
+
+        extracted_titles = []
+        for pattern in title_patterns:
+            match = re.search(pattern, query, re.IGNORECASE)
+            if match and len(match.group(1).strip()) >= 3:
+                extracted_titles.append(match.group(1).strip())
+
+        # Only use extracted titles if we found any, otherwise use the full query
+        texts_to_check = extracted_titles if extracted_titles else [query_lower]
+
+    print("Texts to check for fuzzy matching:", texts_to_check)
+
+    for text in texts_to_check:
+        for book_title in unique_books:
+            book_title_lower = str(book_title).lower()
+            # Use token_set_ratio which is better for handling "the", "a", etc.
+            # and doesn't give false positives for short substring matches
+            score = fuzz.token_set_ratio(text, book_title_lower)
+
+            if score > highest_score and score >= fuzzy_threshold:
+                highest_score = score
+                matched_book = book_title
+
+    # Filter dataframe if a book was matched
+    search_df = combined_books_df
+    if matched_book:
+        search_df = combined_books_df[combined_books_df["book_title"] == matched_book]
+        if os.environ.get("ENV") == "dev":
+            print(
+                f"Narrowing search to book: {matched_book} (fuzzy score: {highest_score})"
+            )
+            print(
+                f"Searching {len(search_df)} chunks instead of {len(combined_books_df)}"
+            )
+    else:
+        if os.environ.get("ENV") == "dev":
+            print(
+                "No specific book matched; searching all books. Best score was:",
+                highest_score,
+            )
 
     # pylint: disable=too-many-locals
     query_embedding = client.models.embed_content(
@@ -35,14 +103,14 @@ def find_best_text_chunks(
     )
 
     dot_products = np.dot(
-        np.stack(combined_books_df["embeddings"]), query_embedding.embeddings[0].values
+        np.stack(search_df["embeddings"]), query_embedding.embeddings[0].values
     )
     # Get indices of top_k highest dot products
     top_indices = np.argsort(dot_products)[-top_k:][::-1]  # Sort descending
 
     results = []
     for similarity_score_order, chunk_index in enumerate(top_indices, 1):
-        row = combined_books_df.iloc[chunk_index]
+        row = search_df.iloc[chunk_index]
 
         chapter_title = str(row["title"])
         chapter_index = int(row["chapter_index"])
@@ -53,7 +121,7 @@ def find_best_text_chunks(
         book_author = str(row["book_author"])
 
         # Get surrounding chunks for context
-        book_df = combined_books_df[combined_books_df["filename"] == filename]
+        book_df = search_df[search_df["filename"] == filename]
 
         # Get context window (previous and next chunks)
         start_idx = max(0, book_chunk_index - context_chunks)
@@ -66,7 +134,9 @@ def find_best_text_chunks(
         for _, ctx_row in context_rows.iterrows():
             ctx_text = str(ctx_row["text"])
             # Extract actual text content
-            text_match = re.search(r"From Chapter\s+.+?:\s*(.+)", ctx_text, re.DOTALL)
+            text_match = re.search(
+                r"Book:\s+[^,]+,\s+Chapter:\s+\d+\s+[^-]+-\s*(.+)", ctx_text, re.DOTALL
+            )
             if text_match:
                 ctx_text = text_match.group(1).strip()
 

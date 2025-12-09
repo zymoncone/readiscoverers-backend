@@ -66,6 +66,7 @@ class SearchRequest(BaseModel):
     top_k: int = 3
     query_id: str = None
     enhanced_query: bool = None
+    keywords: list[str] = []
 
 
 class BookDataRequest(BaseModel):
@@ -73,10 +74,10 @@ class BookDataRequest(BaseModel):
 
     # pylint: disable=too-few-public-methods
     url: str = None
-    target_chunk_size: int = 800
-    sentence_overlap: int = 2
-    small_paragraph_length: int = 200
-    small_paragraph_overlap: int = 2
+    target_chunk_size: int = 1200
+    sentence_overlap: int = 3
+    small_paragraph_length: int = 300
+    small_paragraph_overlap: int = 3
 
 
 @app.get("/")
@@ -180,6 +181,11 @@ async def search_response(req: SearchRequest):
         return {"status": "error", "message": "query_id must be provided."}
     if req.enhanced_query is None:
         return {"status": "error", "message": "enhanced_query must be provided."}
+    if req.keywords is None:
+        return {
+            "status": "error",
+            "message": "keywords or empty list must be provided.",
+        }
 
     # Load and combine dataframes from all filenames
     combined_dfs_as_list = []
@@ -236,6 +242,7 @@ async def search_response(req: SearchRequest):
         query_id=req.query_id,
         enhanced_query=req.enhanced_query,
         chunking_metadata=chunking_metadata,
+        keywords=req.keywords,
     )
     if response["status"] == "error":
         return response

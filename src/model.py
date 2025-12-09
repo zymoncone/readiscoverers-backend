@@ -27,8 +27,9 @@ def call_model_with_structured_output(user_query: str, client) -> Union[dict, No
             FunctionDeclaration(
                 name="generate_book_search_query",
                 description=(
-                    "Generates a semantic search query to find relevant "
-                    "passages in a book."
+                    "Reformulates a natural-language question into a concise, "
+                    "semantic-search-optimized query for locating relevant book passages. "
+                    "The model must NOT answer the question—only rewrite it."
                 ),
                 parameters={
                     "type": "object",
@@ -36,26 +37,25 @@ def call_model_with_structured_output(user_query: str, client) -> Union[dict, No
                         "search_query": {
                             "type": "string",
                             "description": (
-                                "The refined search query text to find relevant "
-                                "book passages. This should capture the core "
-                                "semantic meaning of what the user is looking for."
+                                "A concise refined search query capturing the user's "
+                                "true intent. Must not include an answer or invented facts. "
+                                "Should explicitly name characters/items instead of pronouns."
                             ),
                         },
                         "context": {
                             "type": "string",
                             "description": (
-                                "Additional context about what type of information "
-                                "the user wants (e.g., 'character description', "
-                                "'plot event', 'dialogue', 'setting description')."
+                                "Optional classification of what type of information is being sought "
+                                "(e.g., 'character description', 'plot event', 'dialogue', "
+                                "'setting', 'instructions/how-to')."
                             ),
                         },
                         "keywords": {
                             "type": "array",
                             "items": {"type": "string"},
                             "description": (
-                                "Important keywords or phrases that should appear "
-                                "in the results (e.g., character names, locations, "
-                                "themes)."
+                                "Optional important keywords: character names, locations, items, or concepts "
+                                "extracted directly from the user's query without adding new facts."
                             ),
                         },
                     },
@@ -66,24 +66,50 @@ def call_model_with_structured_output(user_query: str, client) -> Union[dict, No
     )  # Construct the prompt with clear instructions for the model
     # and reference the desired output format implicitly via the tool
     prompt = f"""
-    You are an expert at converting natural language questions into optimized semantic search queries for finding relevant passages in books.
-    Your goal is to extract the core search intent and transform it into an effective query for finding book passages.
+    You are an assistant that converts user questions into optimized semantic search queries
+    for retrieving passages from books. Do NOT answer the question. Do NOT invent new facts.
+
+    Your responsibilities:
+    1. Extract the core intent of the user's question.
+    2. Rewrite it into a concise search query (typically 4-12 words).
+    3. Make entities explicit (expand pronouns like "she" -> "Dorothy" only if mentioned).
+    4. Do not guess or add information beyond what the user provided.
+    5. Optionally include:
+    - "context": the general type of information requested
+                    (e.g., "character description", "plot event", "instructions").
+    - "keywords": explicit names, places, items, or major nouns from the query.
 
     User's question: "{user_query}"
 
-    Please provide the book search query using the 'generate_book_search_query' tool.
-    - 'search_query': A refined version of the user's question optimized for semantic search
-    - 'context': What type of information is being sought (optional)
-    - 'keywords': Important names, places, or concepts that should be found (optional)
+    Produce your response by calling the 'generate_book_search_query' tool.
 
-    Examples:
-    - User asks: "When does Dorothy meet the Scarecrow?"
-      - search_query: "Dorothy first encounters and meets the Scarecrow"
-      - keywords: ["Dorothy", "Scarecrow"]
+    Examples of correct behavior:
 
-    - User asks: "What happens in the Emerald City?"
-      - search_query: "events and scenes taking place in the Emerald City"
-      - keywords: ["Emerald City"]
+    Example 1
+    User asks: "When does Dorothy meet the Scarecrow?"
+    - search_query: "Dorothy's first meeting with the Scarecrow"
+    - context: "plot event"
+    - keywords: ["Dorothy", "Scarecrow"]
+
+    Example 2
+    User asks: "Why is Ojo arrested?"
+    - search_query: "reasons for Ojo being arrested"
+    - context: "plot event"
+    - keywords: ["Ojo"]
+
+    Example 3
+    User asks: "How is Glinda described?"
+    - search_query: "description of Glinda's appearance"
+    - context: "character description"
+    - keywords: ["Glinda"]
+
+    Example 4
+    User asks: "How does one use the Powder of Life?"
+    - search_query: "instructions for using the Powder of Life"
+    - context: "instructions"
+    - keywords: ["Powder of Life"]
+
+    Now reformulate the user's question accordingly.
     """
 
     # Generate content with the model, including the tool definition
@@ -94,7 +120,7 @@ def call_model_with_structured_output(user_query: str, client) -> Union[dict, No
             model=model_id,
             contents=prompt,
             config=GenerateContentConfig(
-                temperature=0.0,  # Aim for deterministic output for query generation
+                temperature=0.0,  # Aim for deterministic output
                 tools=[semantic_search_query_tool],
             ),
         )

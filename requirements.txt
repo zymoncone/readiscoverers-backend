@@ -9,3 +9,5 @@ google-cloud-aiplatform
 google-genai
 bs4
 pyspellchecker
+fuzzywuzzy
+levenshtein

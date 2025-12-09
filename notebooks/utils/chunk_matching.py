@@ -48,9 +48,10 @@ def normalize_text(text, lowercase: bool = True) -> str:
         text,
         flags=re.IGNORECASE,
     )
+
     # Remove chapter markers at the end like "chapter 20." or "chapter twenty"
     text = re.sub(
-        r"\s*chapter\s+(?:\d+|[ivxlcdm]+|" + CHAPTER_NUMBERS + ")\s*\.?\s*$",
+        rf"\s*chapter\s+(?:\d+|[ivxlcdm]+|{CHAPTER_NUMBERS})\s*\.?\s*$",
         "",
         text,
         flags=re.IGNORECASE,
@@ -73,7 +74,9 @@ def normalize_text(text, lowercase: bool = True) -> str:
 
 
 def remove_chapter_chunk_tag(text):
-    text_match = re.search(r"From Chapter\s+.+?:\s*(.+)", text, re.DOTALL)
+    text_match = re.search(
+        r"Book:\s+[^,]+,\s+Chapter:\s+\d+\s+[^-]+-\s*(.+)", text, re.DOTALL
+    )
     if text_match:
         return text_match.group(1).strip()
     return text

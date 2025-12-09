@@ -112,6 +112,7 @@ async def run_test_async(
         "top_k": 3,
         "query_id": query_id,
         "enhanced_query": True,
+        "keywords": result["keywords"],
     }
 
     async with session.post(
@@ -128,6 +129,7 @@ async def run_all_tests(
     param_combos: list,
     book_urls: list,
     skip_book_processing: bool = False,
+    results_filename: str = "readiscovers_app_results_top_10_param_combos_RUN_X",
 ):
     run_id = str(uuid.uuid4())[:8]
     import datetime
@@ -145,7 +147,7 @@ async def run_all_tests(
 
             timestamp = datetime.datetime.now().strftime("%H:%M:%S.%f")[:-3]
             print(
-                f"[{timestamp}] [{run_id}] TEST {test_num}: chunk_size={target_chunk_size}"
+                f"[{timestamp}] [{run_id}] TEST {test_num}: chunk_size={target_chunk_size} sentence_overlap={sentence_overlap} small_paragraph_length={small_paragraph_length} small_paragraph_overlap={small_paragraph_overlap}"
             )
 
             if not skip_book_processing:
@@ -320,6 +322,10 @@ async def run_all_tests(
                         "all_chunks": chunk_lengths,
                     }
                     all_results.append(result_row)
+                    pd.DataFrame(all_results).to_csv(
+                        f"{results_filename}.csv",
+                        index=False,
+                    )
 
     results_df = pd.DataFrame(all_results)
     timestamp = datetime.datetime.now().strftime("%H:%M:%S.%f")[:-3]

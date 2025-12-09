@@ -131,7 +131,7 @@ class ChunkProcessor:
         self.processed_chunks = []
 
     def chunk_chapter(
-        self, chapter_index: int, chapter_title: str, content: str
+        self, chapter_index: int, chapter_title: str, content: str, book_title: str
     ) -> None:
         """Process a single chapter's content into chunks.
 
@@ -139,13 +139,16 @@ class ChunkProcessor:
             chapter_index: The index of the chapter
             chapter_title: The full title of the chapter
             content: The paragraph content joined with \\n\\n
+            book_title: The title of the book
         """
         # Split content back into paragraphs
         if os.environ.get("ENV") == "dev":
             print(f"Chunking Chapter {chapter_index}: '{chapter_title}'")
         paragraph_chunks = [p.strip() for p in content.split("\n\n") if p.strip()]
 
-        new_chunk_starter_text = f"From Chapter {chapter_index} {chapter_title}: "
+        new_chunk_starter_text = (
+            f"Book: {book_title}, Chapter: {chapter_index} {chapter_title} - "
+        )
         chunk = new_chunk_starter_text
         chunk_index = 0
         chunking_style = None
@@ -371,7 +374,12 @@ class ChunkProcessor:
         self.processed_chunks = []  # Reset for new book
 
         for chapter in book_data["chapters"]:
-            self.chunk_chapter(chapter["index"], chapter["title"], chapter["content"])
+            self.chunk_chapter(
+                chapter["index"],
+                chapter["title"],
+                chapter["content"],
+                book_data["title"],
+            )
 
         if os.environ.get("ENV") == "dev":
             print(f"Number of chunks: {len(self.processed_chunks)}")

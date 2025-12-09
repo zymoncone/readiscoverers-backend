@@ -60,3 +60,13 @@ gcloud api-gateway gateways create <gateway-name>\
 ```bash
 gcloud services enable MANAGED_SERVICE_NAME
 ```
+
+Once you have created one to update your API gateway with a new config simply follow the same instructions to create a config and then update the gateway using the following:
+
+```bash
+gcloud api-gateway gateways update <gateway-name>\
+    --api=<api-name> \
+    --api-config=<config-name> \
+    --location=<location> \
+    --project=<project-id>
+```
