@@ -1,4 +1,4 @@
-# READISCOVERERS
+# readiscover.app
 
 [![App Status](https://img.shields.io/badge/Live-readiscover.app-6366f1?style=for-the-badge)](https://readiscover.app)
 [![Pylint](https://github.com/zymoncone/readiscoverers-backend/actions/workflows/pylint.yml/badge.svg)](https://github.com/zymoncone/readiscoverers-backend/actions/workflows/pylint.yml)
