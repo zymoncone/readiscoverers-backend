@@ -1,9 +1,12 @@
+"""Pipeline for OZ extractor (GPT-5.1) results"""
+
 import pandas as pd
 
 
 def preprocess_oz_extractor_results(
     oz_extractor_results_df: pd.DataFrame,
 ) -> pd.DataFrame:
+    """Preprocess OZ extractor results DataFrame to reshape and extract filenames."""
     # Extract filenames for all loc columns
     for i in [1, 2, 3]:
         oz_extractor_results_df[f"filename_{i}"] = oz_extractor_results_df[

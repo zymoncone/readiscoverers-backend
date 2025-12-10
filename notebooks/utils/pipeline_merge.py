@@ -1,3 +1,5 @@
+"""Merge model output with expected data and check for correctness."""
+
 import pandas as pd
 
 
@@ -6,6 +8,8 @@ def merge_model_and_expected_data(
     expected_chunk_data_df: pd.DataFrame,
     selected_questions: pd.DataFrame = None,
 ) -> pd.DataFrame:
+    """Merge model output with expected data and check for correctness."""
+
     # Create a mapping from results_df with the columns you need
     results_mapping = expected_chunk_data_df[
         ["original_query", "expected_all_chunk_indices", "expected_book_filename"]
@@ -38,7 +42,7 @@ def merge_model_and_expected_data(
     return combined_df
 
 
-def check_match_and_overlap(row):
+def check_match_and_overlap(row) -> bool:
     """Check if filenames match and chunks overlap"""
     # Check if both required fields are not null
     if pd.isna(row["model_filename"]) or pd.isna(row["expected_book_filename"]):

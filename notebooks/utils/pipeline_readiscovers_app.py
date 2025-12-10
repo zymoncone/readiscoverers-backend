@@ -1,3 +1,5 @@
+"""Pipeline to readiscoverers app: process books, run tests, and collect results."""
+
 import os
 import aiohttp
 import asyncio
@@ -16,7 +18,7 @@ async def process_book(
     sentence_overlap=2,
     small_paragraph_length=200,
     small_paragraph_overlap=2,
-):
+) -> str:
     """Process a single book and return its filename"""
     book_data_payload = {
         "url": url,
@@ -35,7 +37,7 @@ async def process_book(
         return result.get("filename")
 
 
-async def process_all_books(book_urls, **chunking_params):
+async def process_all_books(book_urls: list[str], **chunking_params) -> list[str]:
     """
     Process all books in parallel and wait for all to complete
 
@@ -66,7 +68,8 @@ async def run_test_async(
     small_paragraph_length=None,
     small_paragraph_overlap=None,
     skip_book_upload=True,
-):
+) -> dict:
+    """Run a single test asynchronously, optionally processing books first."""
 
     if not test_query:
         raise ValueError("test_query must be provided")
@@ -130,7 +133,8 @@ async def run_all_tests(
     book_urls: list,
     skip_book_processing: bool = False,
     results_filename: str = "readiscovers_app_results_top_10_param_combos_RUN_X",
-):
+) -> pd.DataFrame:
+    """Run all tests asynchronously with given parameters and book URLs."""
     run_id = str(uuid.uuid4())[:8]
     import datetime
 
