@@ -58,3 +58,6 @@ test.py
 /notebooks/*.html
 /notebooks/*.csv
 **/client_secrets.json
+
+# large media files
+/media/*.mp4
