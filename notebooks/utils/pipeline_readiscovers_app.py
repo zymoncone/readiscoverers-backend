@@ -1,11 +1,11 @@
 """Pipeline to readiscoverers app: process books, run tests, and collect results."""
 
 import os
-import aiohttp
 import asyncio
 import uuid
-
 import pandas as pd
+
+import aiohttp
 
 from .config import BASE_URL
 from .chunk_matching import precompute_text_locations_in_chunks
@@ -151,7 +151,9 @@ async def run_all_tests(
 
             timestamp = datetime.datetime.now().strftime("%H:%M:%S.%f")[:-3]
             print(
-                f"[{timestamp}] [{run_id}] TEST {test_num}: chunk_size={target_chunk_size} sentence_overlap={sentence_overlap} small_paragraph_length={small_paragraph_length} small_paragraph_overlap={small_paragraph_overlap}"
+                f"[{timestamp}] [{run_id}] TEST {test_num}: chunk_size={target_chunk_size} "
+                f"sentence_overlap={sentence_overlap} small_paragraph_length={small_paragraph_length} "
+                f"small_paragraph_overlap={small_paragraph_overlap}"
             )
 
             if not skip_book_processing:
@@ -194,7 +196,7 @@ async def run_all_tests(
             selected_questions_with_expected = precompute_text_locations_in_chunks(
                 selected_questions
             )
-            print(f"Completed precomputing expected locations.\n")
+            print("Completed precomputing expected locations.\n")
 
             # Process chunk length data
             chunk_lengths = {}

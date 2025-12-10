@@ -1,5 +1,6 @@
 """Merge model output with expected data and check for correctness."""
 
+import ast
 import pandas as pd
 
 
@@ -59,18 +60,14 @@ def check_match_and_overlap(row) -> bool:
     # Convert string representations to actual lists if needed
     if isinstance(model_chunks, str):
         try:
-            import ast
-
             model_chunks = ast.literal_eval(model_chunks)
-        except:
+        except (ValueError, SyntaxError):
             return False
 
     if isinstance(expected_chunks, str):
         try:
-            import ast
-
             expected_chunks = ast.literal_eval(expected_chunks)
-        except:
+        except (ValueError, SyntaxError):
             return False
 
     # Check if either is None or not a list

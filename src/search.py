@@ -24,8 +24,22 @@ def find_best_text_chunks(
     fuzzy_threshold: int = 80,
 ) -> dict:
     """
-    Compute the distances between the query and each document in the dataframe
-    using the dot product.
+    Find the best matching text chunks for a given query using semantic similarity.
+
+    Take advantage of keywords or enhanced query context to improve matching accuracy
+    by narrowing down to a specific book when possible.
+
+    Args:
+        query (str): The search query.
+        combined_books_df (pd.DataFrame): DataFrame containing book chunks with embeddings.
+        client: The embedding client to use.
+        top_k (int): Number of top results to return.
+        query_id (str): Optional identifier for the query.
+        enhanced_query (bool): Whether the query has been enhanced with additional context.
+        chunking_metadata (dict): Optional metadata to include in results.
+        keywords (list): Optional list of keywords extracted from the query.
+        context_chunks (int): Number of surrounding chunks to include for context.
+        fuzzy_threshold (int): Minimum fuzzy match score to consider a book title match.
     """
 
     # Check if query mentions a specific book title (fuzzy matching)

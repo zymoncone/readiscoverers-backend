@@ -8,6 +8,7 @@ from google.genai.types import (
     FunctionDeclaration,
     Tool,
 )
+from .constants import MODEL_ID
 
 
 def call_model_with_structured_output(user_query: str, client) -> Union[dict, None]:
@@ -16,8 +17,7 @@ def call_model_with_structured_output(user_query: str, client) -> Union[dict, No
 
     Args:
         user_query: The natural language query from the user.
-        location: The region where your Gemini model is available (e.g., "us-central1").
-        user_query: The natural language query from the user.
+        client: The Google GenAI client to use for model calls.
     """
 
     # Define the desired output schema as a FunctionDeclaration
@@ -45,7 +45,7 @@ def call_model_with_structured_output(user_query: str, client) -> Union[dict, No
                         "context": {
                             "type": "string",
                             "description": (
-                                "Optional classification of what type of information is being sought "
+                                "Optional classification of what type of information is being sought "  # pylint: disable=line-too-long
                                 "(e.g., 'character description', 'plot event', 'dialogue', "
                                 "'setting', 'instructions/how-to')."
                             ),
@@ -54,7 +54,7 @@ def call_model_with_structured_output(user_query: str, client) -> Union[dict, No
                             "type": "array",
                             "items": {"type": "string"},
                             "description": (
-                                "Optional important keywords: character names, locations, items, or concepts "
+                                "Optional important keywords: character names, locations, items, or concepts "  # pylint: disable=line-too-long
                                 "extracted directly from the user's query without adding new facts."
                             ),
                         },
@@ -71,7 +71,7 @@ def call_model_with_structured_output(user_query: str, client) -> Union[dict, No
 
     Your responsibilities:
     1. Extract the core intent of the user's question.
-    2. Rewrite it into a concise search query (typically 4-12 words).
+    2. Rewrite it into a concise search query.
     3. Make entities explicit (expand pronouns like "she" -> "Dorothy" only if mentioned).
     4. Do not guess or add information beyond what the user provided.
     5. Optionally include:
@@ -114,10 +114,8 @@ def call_model_with_structured_output(user_query: str, client) -> Union[dict, No
 
     # Generate content with the model, including the tool definition
     try:
-        model_id = "gemini-2.0-flash-001"
-
         response = client.models.generate_content(
-            model=model_id,
+            model=MODEL_ID,
             contents=prompt,
             config=GenerateContentConfig(
                 temperature=0.0,  # Aim for deterministic output

@@ -148,7 +148,7 @@ async def book_data(req: BookDataRequest):
         "book_author": book_author,
     }
 
-    with open(f"{TEMP_DIR}/{filename}_metadata.json", "w") as f:
+    with open(f"{TEMP_DIR}/{filename}_metadata.json", "w", encoding="utf-8") as f:
         json.dump(metadata, f)
 
     return {
@@ -169,6 +169,7 @@ async def options_book_data():
 @app.post("/v1/search-response")
 async def search_response(req: SearchRequest):
     """Search for relevant passages in processed book data."""
+    # pylint: disable=too-many-return-statements
     if not req.filenames:
         return {"status": "error", "message": "at least one filename must be provided."}
     if req.query is None:
@@ -211,7 +212,7 @@ async def search_response(req: SearchRequest):
         metadata_path = f"{TEMP_DIR}/{filename}_metadata.json"
 
         if os.path.exists(metadata_path):
-            with open(metadata_path, "r") as f:
+            with open(metadata_path, "r", encoding="utf-8") as f:
                 chunking_metadata = json.load(f)
 
             df["book_title"] = chunking_metadata["book_title"]
@@ -230,7 +231,8 @@ async def search_response(req: SearchRequest):
 
     if os.environ.get("ENV") == "dev":
         print(
-            f"Combined {len(combined_dfs_as_list)} dataframes with total {len(combined_books_df)} rows"
+            f"Combined {len(combined_dfs_as_list)} dataframes with "
+            f"total {len(combined_books_df)} rows"
         )
         combined_books_df.to_csv(f"{TEMP_DIR}/_DEV_combined_books_df.csv")
 

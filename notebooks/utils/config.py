@@ -5,14 +5,22 @@ BASE_URL = "http://localhost:8080"
 
 # List of book URLs
 BOOK_URLS = [
-    "https://www.gutenberg.org/cache/epub/55/pg55-images.html",  # The Wonderful Wizard of Oz
-    "https://www.gutenberg.org/cache/epub/54/pg54-images.html",  # Marvelous Land of Oz
-    "https://www.gutenberg.org/cache/epub/33361/pg33361-images.html",  # Ozma of Oz
-    "https://www.gutenberg.org/cache/epub/22566/pg22566-images.html",  # Dorothy and the Wizard in Oz
-    "https://www.gutenberg.org/cache/epub/26624/pg26624-images.html",  # The Road to Oz
-    "https://www.gutenberg.org/cache/epub/41667/pg41667-images.html",  # The Emerald City of Oz
-    "https://www.gutenberg.org/cache/epub/32094/pg32094-images.html",  # The Patchwork Girl of Oz
-    "https://www.gutenberg.org/cache/epub/75720/pg75720-images.html",  # Jack Pumpkinhead of Oz
+    "https://www.gutenberg.org/cache/epub/55/pg55-images.html",
+    # The Wonderful Wizard of Oz
+    "https://www.gutenberg.org/cache/epub/54/pg54-images.html",
+    # Marvelous Land of Oz
+    "https://www.gutenberg.org/cache/epub/33361/pg33361-images.html",
+    # Ozma of Oz
+    "https://www.gutenberg.org/cache/epub/22566/pg22566-images.html",
+    # Dorothy and the Wizard in Oz
+    "https://www.gutenberg.org/cache/epub/26624/pg26624-images.html",
+    # The Road to Oz
+    "https://www.gutenberg.org/cache/epub/41667/pg41667-images.html",
+    # The Emerald City of Oz
+    "https://www.gutenberg.org/cache/epub/32094/pg32094-images.html",
+    # The Patchwork Girl of Oz
+    "https://www.gutenberg.org/cache/epub/75720/pg75720-images.html",
+    # Jack Pumpkinhead of Oz
 ]
 
 TEST_PARAM_COMBOS = [

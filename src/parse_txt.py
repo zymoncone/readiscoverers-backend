@@ -1,16 +1,19 @@
+"""parse .txt book content into structured chapters and paragraphs."""
+
 import os
 import re
+from typing import Union
 
 
-def parse_txt_book(text_file: str) -> dict:
+def parse_txt_book(text_file: str) -> Union[dict, None]:
     """Parses a plain text book file into chapters.
 
     The extent of this function is not robust parsing for all possible
     formats, but rather to handle the common formats found in Project
     Gutenberg plain text files.
 
-    The html parser is more robust and should be preferred when
-    available.
+    The html parser (./parse_html.py) is more robust and should be
+    preferred when available.
     """
     # Find the start of the actual content
     intro_matches = list(re.finditer(r"Introduction", text_file))

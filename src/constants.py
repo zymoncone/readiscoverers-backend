@@ -3,6 +3,8 @@
 import re
 
 EMBEDDING_MODEL_ID = "text-embedding-005"
+MODEL_ID = "gemini-2.0-flash-001"
+
 TEMP_DIR = "/tmp"
 COLUMN_NAMES = [
     "chapter_index",

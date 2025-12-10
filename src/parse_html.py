@@ -1,4 +1,7 @@
+"""parse HTML book content into structured chapters and paragraphs using BeautifulSoup."""
+
 import re
+from typing import Union, Iterable
 from bs4 import BeautifulSoup
 from spellchecker import SpellChecker
 
@@ -12,7 +15,8 @@ from .constants import (
 spell = SpellChecker()
 
 
-def find_book_meta_data(soup, meta_key, top_n=5):
+def find_book_meta_data(soup, meta_key, top_n=5) -> Union[str, None]:
+    """Extract book metadata (title or author) from the first N paragraphs."""
     paragraphs = soup.find_all("p")[:top_n]
 
     book_title_pattern = re.compile(
@@ -28,6 +32,8 @@ def find_book_meta_data(soup, meta_key, top_n=5):
 
 
 def title_case(func):
+    """Decorator to convert chapter titles to title case."""
+
     def wrapper(*args, **kwargs):
         chapter_info = func(*args, **kwargs)
         if chapter_info:
@@ -62,7 +68,8 @@ def title_case(func):
     return wrapper
 
 
-def remove_page_number_hyperlinks(element: BeautifulSoup):
+def remove_page_number_hyperlinks(element: BeautifulSoup) -> BeautifulSoup:
+    """Remove page number hyperlinks from an element."""
     element_copy = element.__copy__()
 
     # Remove standalone <a> tags with page numbers
@@ -83,7 +90,8 @@ def remove_page_number_hyperlinks(element: BeautifulSoup):
     return element_copy
 
 
-def match_chapter_title(text, header) -> dict:
+def match_chapter_title(text, header) -> Union[dict, None]:
+    """Match chapter title patterns in text."""
 
     if match := CHAPTER_WITH_TITLE_PATTERN.match(text):
         return {"title": match.group("title").strip(), "sourceline": header.sourceline}
@@ -99,7 +107,7 @@ def match_chapter_title(text, header) -> dict:
     return None
 
 
-def get_img_text(element: BeautifulSoup, title_only: bool = False) -> str | None:
+def get_img_text(element: BeautifulSoup, title_only: bool = False) -> Union[str, None]:
     """Extract alt or title text from an img tag within an element."""
     if img := element.find("img"):
         if img.get("alt") and not title_only:
@@ -112,7 +120,8 @@ def get_img_text(element: BeautifulSoup, title_only: bool = False) -> str | None
 @title_case
 def extract_chapter_title_from_paragraph(
     p_element: BeautifulSoup, chapter_id_keyword: str = "chap"
-) -> dict | None:
+) -> Union[dict, None]:
+    """extract chapter title from paragraph element."""
     if (
         p_element.find("a")
         and chapter_id_keyword in p_element.find("a").get("id", "").lower()
@@ -127,7 +136,8 @@ def extract_chapter_title_from_paragraph(
 @title_case
 def extract_chapter_title_from_div(
     div_element: BeautifulSoup, chapter_class_keyword: str = "chap"
-) -> dict | None:
+) -> Union[dict, None]:
+    """extract chapter title from div element."""
     if chapter_class_keyword in div_element.get("class", []):
         if chapter_title := div_element.find("span").get_text().strip():
             return {"title": chapter_title, "sourceline": div_element.sourceline}
@@ -137,8 +147,9 @@ def extract_chapter_title_from_div(
 @title_case
 def extract_chapter_title_from_header(
     h2, book_title: str = None, book_author: str = None
-) -> dict | None:
-    # 1. Check for chapter wording in header text
+) -> Union[dict, None]:
+    """extract chapter title from h2 header element."""
+    # Check for chapter wording in header text
     text = remove_page_number_hyperlinks(h2).get_text(" ", strip=True)
 
     if any(
@@ -164,17 +175,14 @@ def extract_chapter_title_from_header(
 
     # If there's no paragraph, or the next header comes before the paragraph, skip
     if not next_p or (next_header and next_header.sourceline < next_p.sourceline):
-        # print("skipping h2 with no paragraph sibling")
         return None
 
     if chapter_info := match_chapter_title(text, h2):
-        # print("matched pattern 1 from h2")
         return chapter_info
 
-    # 2. Check for img tag in h2
+    # Check for img tag in h2
     if img_text := get_img_text(h2):
         if chapter_info := match_chapter_title(img_text, h2):
-            # print("matched pattern 2 from h2")
             return chapter_info
 
     return {"title": text, "sourceline": h2.sourceline}
@@ -340,8 +348,10 @@ def extract_chapter_content(
     return chapters
 
 
-def extract_preface(soup, start_sourceline, first_chapter_sourceline):
-    """Extract preface if there's a drop cap paragraph or 'To my readers' before the first chapter."""
+def extract_preface(
+    soup, start_sourceline, first_chapter_sourceline
+) -> Union[dict, None]:
+    """Extract preface if there's a drop cap paragraph or a key phrase before the first chapter."""
     if not first_chapter_sourceline:
         return None
 
@@ -387,7 +397,10 @@ def extract_preface(soup, start_sourceline, first_chapter_sourceline):
     return None
 
 
-def check_sourceline_bounds(elements, start_sourceline, end_sourceline):
+def check_sourceline_bounds(
+    elements, start_sourceline, end_sourceline
+) -> Union[Iterable, None]:
+    """Yield elements within specified sourceline bounds."""
     for element in elements:
         if start_sourceline and element.sourceline < start_sourceline:
             continue
@@ -396,7 +409,8 @@ def check_sourceline_bounds(elements, start_sourceline, end_sourceline):
         yield element
 
 
-def parse_html_book(html_file: str) -> dict:
+def parse_html_book(html_file: str) -> Union[dict, None]:
+    """Parse HTML book content into structured chapters and paragraphs."""
     soup = BeautifulSoup(html_file, "html.parser")
 
     book_title = find_book_meta_data(soup, "title")

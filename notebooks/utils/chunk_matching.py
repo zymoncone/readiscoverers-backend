@@ -1,22 +1,32 @@
-import os
-import re
-import sys
+"""Matching text excerpts to their corresponding chunks in preprocessed book data."""
 
+import sys
+import os
+import glob
 import pandas as pd
-from bs4 import BeautifulSoup
+import re
+from typing import Tuple, Union
 
 # Add the project root to the path
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../../"))
-from src.parse_html import get_paragraph_with_dropcap
-from src.constants import CHAPTER_NUMBERS
+from src.parse_html import (
+    get_paragraph_with_dropcap,
+)  # pylint: disable=wrong-import-position
+from src.constants import CHAPTER_NUMBERS  # pylint: disable=wrong-import-position
+
+from bs4 import BeautifulSoup
 
 
 def normalize_text(text, lowercase: bool = True) -> str:
+    """Normalize text by removing HTML tags, page numbers, chapter markers, quotes, and punctuation.
+
+    This replicates the backend normalization behavior for chunk matching.
+    """
     # Handle NaN or None inputs
     if pd.isna(text) or text is None:
         return ""
 
-    if type(text) != str:
+    if not isinstance(text, str):
         raise ValueError(f"Input text must be a string for text: {text}")
 
     # Check if text contains HTML tags
@@ -65,15 +75,15 @@ def normalize_text(text, lowercase: bool = True) -> str:
     text = re.sub(r"[—–-]", " ", text)
     # Replace commas, found missing
     text = re.sub(r",", "", text)
-    # # Remove all other punctuation
-    # text = re.sub(r"[.,;:!?]", "", text)
+
     if lowercase:
         text = text.lower()
     # Normalize whitespace
     return re.sub(r"\s+", " ", text.strip())
 
 
-def remove_chapter_chunk_tag(text):
+def remove_chapter_chunk_tag(text) -> str:
+    """Remove chapter/chunk tag from the start of chunk text."""
     text_match = re.search(
         r"Book:\s+[^,]+,\s+Chapter:\s+\d+\s+[^-]+-\s*(.+)", text, re.DOTALL
     )
@@ -82,7 +92,7 @@ def remove_chapter_chunk_tag(text):
     return text
 
 
-def find_chunk_locations_with_continuity(filepath, expected_text):
+def find_chunk_locations_with_continuity(filepath, expected_text) -> list:
     """
     Find chunks that contain the expected text with continuity across multiple chunks.
     Matches sentence-by-sentence, skipping duplicate sentences from previous chunks.
@@ -115,7 +125,7 @@ def find_chunk_locations_with_continuity(filepath, expected_text):
     first_sentence = expected_sentences[0]
     start_chunk_idx = None
 
-    print(f"Searching for first sentence in chunks...")
+    print("Searching for first sentence in chunks...")
 
     # First pass: find starting chunk
     for chunk_idx, row in temp_df.iterrows():
@@ -181,7 +191,9 @@ def find_chunk_locations_with_continuity(filepath, expected_text):
                 sentence_idx += 1
                 chunk_sentence_idx += 1
                 matched_in_this_chunk = True
-                print(f"  ✓ Matched sentence {sentence_idx}/{len(expected_sentences)}")
+                print(
+                    f"  ok - Matched sentence {sentence_idx}/{len(expected_sentences)}"
+                )
             else:
                 # No match - check if we've already matched something in this chunk
                 if matched_in_this_chunk:
@@ -190,9 +202,8 @@ def find_chunk_locations_with_continuity(filepath, expected_text):
                     print(f"  Expected: '{expected_sent}'")
                     print(f"  Got: '{chunk_sent}'")
                     return []
-                else:
-                    # Haven't matched anything in this chunk yet, try next sentence in chunk
-                    chunk_sentence_idx += 1
+                # Haven't matched anything in this chunk yet, try next sentence in chunk
+                chunk_sentence_idx += 1
 
         # If we haven't matched anything in this chunk and it's not the first, something's wrong
         if not matched_in_this_chunk and not is_first_chunk:
@@ -218,7 +229,12 @@ def find_chunk_locations_with_continuity(filepath, expected_text):
     return matched_chunks
 
 
-def find_chunk_location_from_text(filepath, expected_text):
+def find_chunk_location_from_text(
+    filepath, expected_text
+) -> Tuple[
+    Union[int, None], Union[int, None], Union[str, None], Union[int, None], list
+]:
+    """Find the chunk locations for the expected text in the given pickle file."""
     matched_chunks = find_chunk_locations_with_continuity(filepath, expected_text)
 
     if not matched_chunks:
@@ -249,7 +265,8 @@ def find_chunk_location_from_text(filepath, expected_text):
 
 def precompute_text_locations_in_chunks(
     selected_questions_df: pd.DataFrame, use_expected_settings: bool = True
-):
+) -> list:
+    """Precompute chunk locations for each question's excerpt text."""
     data = []
 
     text_col = "Best Answer" if use_expected_settings else "excerpt"
@@ -316,8 +333,6 @@ def precompute_text_locations_in_chunks(
             matched_filename = None
 
             # Get all pickle files in ../temp/
-            import glob
-
             pickle_files = glob.glob("../temp/*.pkl")
 
             for pickle_path in pickle_files:
