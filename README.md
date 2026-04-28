@@ -13,9 +13,14 @@ Check out the live app at **[readiscover.app](https://readiscover.app)**!
 
 ## 📖 What Does Readiscover Do?
 
-Once a user uploads their book links, we parse and chunk the texts using chapter and paragraph structure along with our tuned splitting and overlap parameters. These chunks are then embedded into vector storage for later retrieval.
+Once a user uploads their book links, we parse and chunk the texts using chapter and paragraph structure along with our tuned splitting and overlap parameters. These chunks are embedded into vector representations and stored permanently in Google Cloud Storage.
 
-When a user submits a query in natural language, a large language model reformulates it to extract context and keywords, producing a structured, search-optimized query. This enhanced query is also embedded, and the top three passages with the highest cosine similarity scores between the query embeddings and book embeddings are returned as results.
+When a user submits a query in natural language, a large language model reformulates it to extract context and keywords, producing a structured, search-optimized query. This enhanced query is also embedded, and we perform cosine similarity search against cached book embeddings (loaded from Redis cache or GCS as needed). The top three passages with the highest similarity scores are returned as results.
+
+### Caching Architecture
+- **First Request:** Load embeddings from GCS → Cache in Redis for 24 hours
+- **Subsequent Requests:** Load directly from Redis cache (much faster)
+- **Cache Miss:** Automatic refresh from GCS when cache expires
 
 ## 🛠️ Tech Stack
 
@@ -24,29 +29,52 @@ When a user submits a query in natural language, a large language model reformul
 - **API Framework:** FastAPI
 - **HTML Parsing:** BeautifulSoup4 (bs4)
 - **Deployment:** Docker + Google Cloud Run
-- **Vector Storage:** In-memory with pandas DataFrames
+- **Storage:** Google Cloud Storage (GCS) for persistent book data
+- **Caching:** Redis Cloud for fast access to embeddings and metadata
+- **Vector Storage:** Pandas DataFrames with cosine similarity search
+
+## 🚀 Performance Optimizations
+
+### Multi-Layer Caching Strategy
+- **GCS (Persistent Storage):** Processed book embeddings and metadata stored permanently in Google Cloud Storage
+- **Redis (Fast Cache):** In-memory cache layer using Redis Cloud to avoid repeated GCS downloads
+- **Cache Keys:** `gcs_pickle:{bucket}:{embeddings_path}` and `gcs_json:{bucket}:{metadata_path}`
+- **TTL:** 24 hours cache expiration with automatic refresh
+
+### Benefits
+- ⚡ **Fast Queries:** Sub-second response times after initial cache load
+- 💰 **Cost Effective:** Redis Cloud Free tier ($0/month) for small datasets
+- 🔄 **Scalable:** Easy to upgrade Redis tier as usage grows
+- 🛡️ **Reliable:** Automatic failover and persistence in Redis Cloud
 
 ## 🔍 Architectural Diagram for Semantic Retriever
 
 ```mermaid
 flowchart TD
-    A[Project Gutenberg<br/>Wizard of Oz] --> B[Compute embeddings<br/>and split chunks]
+    B[Compute embeddings<br/>and split chunks]
     C[User document upload] --> D{Already have<br/>embeddings for<br/>this book?}
     D -->|No| B
-    D -->|Yes| E[(Database<br/>text chunks & embeddings)]
+    D -->|Yes| E[(GCS Bucket<br/>embeddings & metadata)]
     B --> E
 
     F[User query<br/><i>'When does he realize<br/>the Wizard isn't real?'</i>] --> G[Query reformulation<br/>via LLM]
     G --> H[semantic_score<br/>reformed_query]
-    E --> H
-    H --> I[Retrieve raw<br/>document chunk]
-    I --> J[Display response<br/>to user]
 
-    G -.->|Example output| K[<i>'Dorothy discovers the<br/>Wizard is an ordinary man<br/>pretending to have powers.'</i>]
+    E --> I{Redis Cache<br/>Hit?}
+    I -->|Yes| J[Load from Redis<br/>Cache]
+    I -->|No| K[Load from GCS<br/>+ Cache in Redis]
+
+    J --> L[Retrieve raw<br/>document chunk]
+    K --> L
+    H --> L
+    L --> M[Display response<br/>to user]
+
+    G -.->|Example output| N[<i>'Dorothy discovers the<br/>Wizard is an ordinary man<br/>pretending to have powers.'</i>]
 
     style B fill:#fff9e6,stroke:#fbbf24,color:#000
     style D fill:#f3e5f5,stroke:#9c27b0,color:#000
     style G fill:#fee,stroke:#f43f5e,color:#000
+    style I fill:#e0f2fe,stroke:#0284c7,color:#000
     style E fill:#f0f0f0,stroke:#666,color:#000
     style J fill:#f0f0f0,stroke:#666,stroke-dasharray: 5 5,color:#000
 
@@ -153,6 +181,13 @@ Search for relevant passages across indexed books using semantic similarity.
      gcloud auth login
      gcloud auth application-default login
      ```
+
+### Required Accounts & Services
+- **Google Cloud Platform (GCP) Account** - For Cloud Storage and Cloud Run deployment
+- **Redis Cloud Account & Database** - For caching book embeddings and metadata
+  - Sign up at [Redis Cloud](https://redis.com/try-free/)
+  - Create a free database (30MB limit, perfect for development)
+  - Get your connection URL (format: `redis://username:password@host:port`)
 
 ### Build locally with docker
 
