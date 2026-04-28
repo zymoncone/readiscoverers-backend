@@ -12,3 +12,4 @@ pyspellchecker
 fuzzywuzzy
 levenshtein
 aiohttp
+rank-bm25

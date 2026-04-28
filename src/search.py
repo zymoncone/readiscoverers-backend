@@ -9,6 +9,7 @@ from fuzzywuzzy import fuzz
 from google.genai.types import EmbedContentConfig
 
 from .constants import EMBEDDING_MODEL_ID
+from .bm25_search import calculate_bm25_scores
 
 
 def find_best_text_chunks(
@@ -116,14 +117,24 @@ def find_best_text_chunks(
         ),
     )
 
+    # Calculate semantic similarity scores
     dot_products = np.dot(
         np.stack(search_df["embeddings"]), query_embedding.embeddings[0].values
     )
-    # Get indices of top_k highest dot products
-    top_indices = np.argsort(dot_products)[-top_k:][::-1]  # Sort descending
+
+    # Calculate BM25 scores
+    bm25_scores = calculate_bm25_scores(search_df, query)
+
+    # Get indices of top_k highest dot products (semantic scores)
+    top_indices_semantic = np.argsort(dot_products)[-top_k:][::-1]  # Sort descending
+
+    # Get indices of top_k highest BM25 scores
+    top_indices_bm25 = np.argsort(bm25_scores)[-top_k:][::-1]  # Sort descending
 
     results = []
-    for similarity_score_order, chunk_index in enumerate(top_indices, 1):
+
+    # Process semantic results
+    for similarity_score_order, chunk_index in enumerate(top_indices_semantic, 1):
         row = search_df.iloc[chunk_index]
 
         chapter_title = str(row["title"])
@@ -134,7 +145,7 @@ def find_best_text_chunks(
         book_title = str(row["book_title"])
         book_author = str(row["book_author"])
 
-        # Get surrounding chunks for context
+        # Get surrounding chunks for context (for semantic match)
         book_df = search_df[search_df["filename"] == filename]
 
         # Get context window (previous and next chunks)
@@ -143,8 +154,8 @@ def find_best_text_chunks(
 
         context_rows = book_df.iloc[start_idx:end_idx]
 
-        # Build context with highlight markers
-        matched_texts = []
+        # Build context with highlight markers for semantic match
+        matched_texts_semantic = []
         for _, ctx_row in context_rows.iterrows():
             ctx_text = str(ctx_row["text"])
             # Extract actual text content
@@ -159,7 +170,7 @@ def find_best_text_chunks(
 
             if ctx_row["book_chunk_index"] == book_chunk_index:
                 # This is the highlighted chunk
-                matched_texts.append(
+                matched_texts_semantic.append(
                     {
                         "chunk_index": int(ctx_row["book_chunk_index"]),
                         "text": ctx_text,
@@ -167,7 +178,7 @@ def find_best_text_chunks(
                     }
                 )
             else:
-                matched_texts.append(
+                matched_texts_semantic.append(
                     {
                         "chunk_index": int(ctx_row["book_chunk_index"]),
                         "text": ctx_text,
@@ -195,14 +206,18 @@ def find_best_text_chunks(
             "query_id": query_id,
             "query": query,
             "enhanced_query": enhanced_query,
-            # Results data
+            # Semantic results data
             "chunk_index": book_chunk_index,
             "chapter_index": chapter_index,  # can get rid of this?
             "chunk_in_chapter_index": chunk_in_chapter_index,
             "chapter_number": chapter_index,
             "chapter_title": chapter_title,
-            "matched_texts": matched_texts,
-            "score": float(dot_products[chunk_index]),
+            "matched_texts": matched_texts_semantic,
+            "semantic_score": float(dot_products[chunk_index]),
+            "score": float(
+                dot_products[chunk_index]
+            ),  # Keep for backward compatibility
+            # General metadata
             "book_progress_percent": book_progress,
             "passage_number": f"Passage {book_chunk_index + 1} of {book_chunk_length}",
             "book_title": book_title,
@@ -215,5 +230,97 @@ def find_best_text_chunks(
             result.update(chunking_metadata)
 
         results.append({"score_order": int(similarity_score_order), "data": result})
+
+    # Process BM25 results
+    for bm25_score_order, bm25_chunk_idx in enumerate(top_indices_bm25, 1):
+        bm25_row = search_df.iloc[bm25_chunk_idx]
+
+        bm25_chapter_title = str(bm25_row["title"])
+        bm25_chapter_index = int(bm25_row["chapter_index"])
+        bm25_filename = bm25_row["filename"]
+        bm25_book_chunk_index = int(bm25_row["book_chunk_index"])
+        bm25_book_chunk_length = int(bm25_row["book_chunk_length"])
+        bm25_book_title = str(bm25_row["book_title"])
+        bm25_book_author = str(bm25_row["book_author"])
+
+        # Get surrounding chunks for context (for BM25 match)
+        bm25_book_df = search_df[search_df["filename"] == bm25_filename]
+
+        # Get context window (previous and next chunks)
+        bm25_start_idx = max(0, bm25_book_chunk_index - context_chunks)
+        bm25_end_idx = min(
+            len(bm25_book_df), bm25_book_chunk_index + context_chunks + 1
+        )
+
+        bm25_context_rows = bm25_book_df.iloc[bm25_start_idx:bm25_end_idx]
+
+        # Build context with highlight markers for BM25 match
+        matched_texts_bm25 = []
+        for _, bm25_ctx_row in bm25_context_rows.iterrows():
+            bm25_ctx_text = str(bm25_ctx_row["text"])
+            # Extract actual text content
+            bm25_text_match = re.search(
+                r"Book:\s+[^,]+,\s+Chapter:\s+\d+\s+[^-]+-\s*(.+)",
+                bm25_ctx_text,
+                re.DOTALL,
+            )
+            if bm25_text_match:
+                bm25_ctx_text = bm25_text_match.group(1).strip()
+
+            # Remove double-double quotes
+            bm25_ctx_text = bm25_ctx_text.replace('""', '"')
+
+            if bm25_ctx_row["book_chunk_index"] == bm25_book_chunk_index:
+                matched_texts_bm25.append(
+                    {
+                        "chunk_index": int(bm25_ctx_row["book_chunk_index"]),
+                        "text": bm25_ctx_text,
+                        "is_match": True,
+                    }
+                )
+            else:
+                matched_texts_bm25.append(
+                    {
+                        "chunk_index": int(bm25_ctx_row["book_chunk_index"]),
+                        "text": bm25_ctx_text,
+                        "is_match": False,
+                    }
+                )
+
+        # Extract chapter info for BM25
+        bm25_chunk_in_chapter_match = re.search(r"(.*)\((\d+)\)", bm25_chapter_title)
+        if (
+            bm25_chunk_in_chapter_match
+            and bm25_chunk_in_chapter_match.group(2).isdigit()
+        ):
+            bm25_chunk_in_chapter_index = int(bm25_chunk_in_chapter_match.group(2))
+            bm25_chapter_title = bm25_chunk_in_chapter_match.group(1).strip()
+        else:
+            bm25_chunk_in_chapter_index = None
+
+        bm25_book_progress = round(
+            (bm25_book_chunk_index + 1) / bm25_book_chunk_length * 100, 1
+        )
+
+        # Add BM25 data to the corresponding semantic result (by score_order)
+        # Find the semantic result with matching score_order
+        for result in results:
+            if result["score_order"] == bm25_score_order:
+                result["data"]["bm25_chunk_index"] = bm25_book_chunk_index
+                result["data"]["bm25_matched_texts"] = matched_texts_bm25
+                result["data"]["bm25_chapter_title"] = bm25_chapter_title
+                result["data"]["bm25_chapter_number"] = bm25_chapter_index
+                result["data"][
+                    "bm25_chunk_in_chapter_index"
+                ] = bm25_chunk_in_chapter_index
+                result["data"]["bm25_score"] = float(bm25_scores[bm25_chunk_idx])
+                result["data"]["bm25_book_title"] = bm25_book_title
+                result["data"]["bm25_book_author"] = bm25_book_author
+                result["data"]["bm25_filename"] = bm25_filename
+                result["data"]["bm25_book_progress_percent"] = bm25_book_progress
+                result["data"][
+                    "bm25_passage_number"
+                ] = f"Passage {bm25_book_chunk_index + 1} of {bm25_book_chunk_length}"
+                break
 
     return {"status": "success", "search_results": results}

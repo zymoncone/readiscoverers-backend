@@ -233,6 +233,7 @@ async def run_all_tests(
                 for result_num, result in enumerate(
                     search_results["search_results"], 1
                 ):
+                    # Semantic matched text
                     matched_text = result["data"]["matched_texts"]
                     matched_hits = [
                         m.get("text", "")
@@ -241,13 +242,25 @@ async def run_all_tests(
                     ]
                     match_text = " ".join(matched_hits) if matched_hits else ""
 
+                    # BM25 matched text
+                    bm25_matched_text = result["data"].get("bm25_matched_texts", [])
+                    bm25_matched_hits = [
+                        m.get("text", "")
+                        for m in bm25_matched_text
+                        if m.get("is_match") is True
+                    ]
+                    bm25_match_text = (
+                        " ".join(bm25_matched_hits) if bm25_matched_hits else ""
+                    )
+
                     book_match = (
                         result["data"]["book_title"].lower().strip()
                         == question_row["Book Title"].lower().strip()
                     )
                     text_match = question_row["Best Answer"] in match_text
+                    bm25_text_match = question_row["Best Answer"] in bm25_match_text
 
-                    # chunk distances
+                    # chunk distances (semantic)
                     chunk_distance_from_expected = (
                         abs(result["data"]["chunk_index"] - expected_chunk_index)
                         if expected_chunk_index is not None and book_match
@@ -265,7 +278,28 @@ async def run_all_tests(
                     else:
                         character_distance_from_expected = "NaN"
 
-                    # chapter distances
+                    # chunk distances (BM25)
+                    bm25_chunk_index = result["data"].get("bm25_chunk_index", "NaN")
+                    bm25_chunk_distance_from_expected = (
+                        abs(bm25_chunk_index - expected_chunk_index)
+                        if expected_chunk_index is not None
+                        and book_match
+                        and bm25_chunk_index != "NaN"
+                        else "NaN"
+                    )
+                    if (
+                        isinstance(bm25_chunk_distance_from_expected, (int, float))
+                        and not pd.isna(bm25_chunk_distance_from_expected)
+                        and os.path.exists(expected_book_filepath)
+                    ):
+                        bm25_character_distance_from_expected = round(
+                            bm25_chunk_distance_from_expected
+                            * avg_chunk_length[expected_filename]
+                        )
+                    else:
+                        bm25_character_distance_from_expected = "NaN"
+
+                    # chapter distances (semantic)
                     chapter_match = (
                         (result["data"]["chapter_number"] == expected_chapter_number)
                         if book_match
@@ -286,6 +320,42 @@ async def run_all_tests(
                         else "NaN"
                     )
 
+                    # chapter distances (BM25)
+                    bm25_book_match = (
+                        result["data"].get("bm25_book_title", "").lower().strip()
+                        == question_row["Book Title"].lower().strip()
+                    )
+                    bm25_chapter_number = result["data"].get(
+                        "bm25_chapter_number", "NaN"
+                    )
+                    bm25_chapter_title = result["data"].get("bm25_chapter_title", "NaN")
+                    bm25_chunk_in_chapter_index = result["data"].get(
+                        "bm25_chunk_in_chapter_index", "NaN"
+                    )
+
+                    bm25_chapter_match = (
+                        (bm25_chapter_number == expected_chapter_number)
+                        if bm25_book_match
+                        else "NaN"
+                    )
+                    bm25_chapter_distance_from_expected = (
+                        abs(bm25_chapter_number - expected_chapter_number)
+                        if expected_chapter_number is not None
+                        and bm25_book_match
+                        and bm25_chapter_number != "NaN"
+                        else "NaN"
+                    )
+                    bm25_chunk_in_chap_distance_from_expected = (
+                        abs(
+                            bm25_chunk_in_chapter_index
+                            - expected_chunk_in_chapter_index
+                        )
+                        if expected_chunk_in_chapter_index is not None
+                        and bm25_chapter_match is True
+                        and bm25_chunk_in_chapter_index != "NaN"
+                        else "NaN"
+                    )
+
                     result_row = {
                         "test_number": test_num,
                         "question_number": question_number,
@@ -296,6 +366,7 @@ async def run_all_tests(
                         "sentence_overlap": sentence_overlap,
                         "small_paragraph_length": small_paragraph_length,
                         "small_paragraph_overlap": small_paragraph_overlap,
+                        # Semantic results
                         "matched_chapter_title": result["data"]["chapter_title"],
                         "expected_chapter_title": expected_chapter_title,
                         "matched_chapter_number": result["data"]["chapter_number"],
@@ -307,7 +378,12 @@ async def run_all_tests(
                         ],
                         "exptected_chunk_in_chapter_index": expected_chunk_in_chapter_index,
                         "chunk_in_chap_distance_from_expected": chunk_in_chap_distance_from_expected,
-                        "score": result["data"]["score"],
+                        "semantic_score": result["data"].get(
+                            "semantic_score", result["data"]["score"]
+                        ),
+                        "score": result["data"][
+                            "score"
+                        ],  # Keep for backward compatibility
                         "matched_text": match_text,
                         "expected_text": question_row["Best Answer"],
                         "correct_text_found": text_match,
@@ -320,6 +396,24 @@ async def run_all_tests(
                         ),
                         "chunk_distance_from_expected": chunk_distance_from_expected,
                         "char_distance_from_expected": character_distance_from_expected,
+                        # BM25 results
+                        "bm25_score": result["data"].get("bm25_score", "NaN"),
+                        "bm25_matched_text": bm25_match_text,
+                        "bm25_correct_text_found": bm25_text_match,
+                        "bm25_matched_chunk_index": bm25_chunk_index,
+                        "bm25_chunk_distance_from_expected": bm25_chunk_distance_from_expected,
+                        "bm25_char_distance_from_expected": bm25_character_distance_from_expected,
+                        "bm25_matched_chapter_title": bm25_chapter_title,
+                        "bm25_matched_chapter_number": bm25_chapter_number,
+                        "bm25_correct_chapter_found": bm25_chapter_match,
+                        "bm25_chapter_distance_from_expected": bm25_chapter_distance_from_expected,
+                        "bm25_matched_chunk_in_chapter_index": bm25_chunk_in_chapter_index,
+                        "bm25_chunk_in_chap_distance_from_expected": bm25_chunk_in_chap_distance_from_expected,
+                        "bm25_matched_book_title": result["data"].get(
+                            "bm25_book_title", "NaN"
+                        ),
+                        "bm25_correct_book_found": bm25_book_match,
+                        # General metadata
                         "matched_book_title": result["data"]["book_title"],
                         "expected_book_title": question_row["Book Title"],
                         "expected_book_filename": expected_filename,

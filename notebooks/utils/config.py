@@ -30,20 +30,20 @@ TEST_PARAM_COMBOS = [
 # Define parameter combinations to test
 DEV_PARAM_COMBOS = [
     # (target_chunk_size, sentence_overlap, small_paragraph_length, small_paragraph_overlap)
+    (1200, 3, 300, 3),
     (1200, 4, 300, 4),
     (1200, 5, 300, 5),
     (1200, 3, 300, 5),
-    (800, 2, 200, 2),  # Default
     (1000, 3, 400, 3),
     (1000, 4, 400, 4),
     (1000, 4, 300, 4),
     (1200, 3, 400, 3),
     (1100, 3, 400, 3),
+    (800, 2, 200, 2),
     (1100, 3, 300, 3),
     (1000, 3, 300, 3),
     (1000, 4, 300, 3),
     (1200, 2, 200, 2),
-    (1200, 3, 300, 3),
     (1200, 2, 200, 2),
     (800, 0, 200, 0),
     (800, 0, 200, 4),
