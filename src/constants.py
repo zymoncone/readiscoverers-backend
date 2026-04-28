@@ -1,11 +1,39 @@
 """Constants used throughout the application."""
 
+import os
 import re
 
 EMBEDDING_MODEL_ID = "text-embedding-005"
 MODEL_ID = "gemini-2.0-flash-001"
 
+# Temporary directory for downloads and dev files (cleaned up regularly)
 TEMP_DIR = "/tmp"
+
+# Google Cloud Storage configuration
+USE_GCS = os.environ.get("USE_GCS", "false").lower() == "true"
+GCS_BUCKET_NAME = os.environ.get("GCS_BUCKET_NAME", "processed-books")
+GCS_EMBEDDINGS_PREFIX = "embeddings"
+GCS_METADATA_PREFIX = "metadata"
+
+# Redis configuration for caching
+USE_REDIS = os.environ.get("USE_REDIS", "false").lower() == "true"
+REDIS_URL = os.environ.get("REDIS_URL", None)
+
+if USE_REDIS and not REDIS_URL:
+    raise ValueError(
+        "USE_REDIS is true but REDIS_URL is not set in environment variables."
+    )
+
+
+REDIS_DB = int(os.environ.get("REDIS_DB", "0"))
+REDIS_TTL_SECONDS = int(
+    os.environ.get("REDIS_TTL_SECONDS", "86400")
+)  # 24 hours default
+
+# Local persistent directory structure (used when USE_GCS=false)
+PROCESSED_BOOKS_DIR = os.environ.get("PROCESSED_BOOKS_DIR", "./processed_books")
+PROCESSED_BOOKS_EMBEDDINGS_DIR = os.path.join(PROCESSED_BOOKS_DIR, "embeddings")
+PROCESSED_BOOKS_METADATA_DIR = os.path.join(PROCESSED_BOOKS_DIR, "metadata")
 COLUMN_NAMES = [
     "chapter_index",
     "title",

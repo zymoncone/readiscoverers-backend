@@ -2,6 +2,7 @@
 
 import os
 import re
+import json
 from typing import Union
 
 import pandas as pd
@@ -11,11 +12,104 @@ from google.genai.types import EmbedContentConfig
 from .constants import (
     EMBEDDING_MODEL_ID,
     TEMP_DIR,
+    PROCESSED_BOOKS_EMBEDDINGS_DIR,
+    PROCESSED_BOOKS_METADATA_DIR,
+    USE_GCS,
+    GCS_BUCKET_NAME,
+    GCS_EMBEDDINGS_PREFIX,
+    GCS_METADATA_PREFIX,
     COLUMN_NAMES,
     LARGE_PARAGRAPH_TOLERANCE,
 )
+from .gcs_utils import (
+    read_pickle_with_cache,
+    read_json_with_cache,
+    blob_exists_in_gcs,
+)
 from .parse_html import parse_html_book
 from .parse_txt import parse_txt_book
+
+
+def is_book_cached(book_title: str) -> bool:
+    """Check if a book has already been processed and cached.
+
+    Args:
+        book_title: The title of the book to check
+
+    Returns:
+        True if both the pickle file and metadata exist, False otherwise
+    """
+    if not book_title:
+        return False
+
+    filename = book_title.replace(" ", "_").lower()
+
+    if USE_GCS:
+        # Check GCS
+        embeddings_blob = f"{GCS_EMBEDDINGS_PREFIX}/{filename}.pkl"
+        metadata_blob = f"{GCS_METADATA_PREFIX}/{filename}_metadata.json"
+        return blob_exists_in_gcs(
+            GCS_BUCKET_NAME, embeddings_blob
+        ) and blob_exists_in_gcs(GCS_BUCKET_NAME, metadata_blob)
+    else:
+        # Check local filesystem
+        pickle_path = f"{PROCESSED_BOOKS_EMBEDDINGS_DIR}/{filename}.pkl"
+        metadata_path = f"{PROCESSED_BOOKS_METADATA_DIR}/{filename}_metadata.json"
+        return os.path.exists(pickle_path) and os.path.exists(metadata_path)
+
+
+def load_cached_book(
+    book_title: str,
+) -> Union[dict, None]:
+    """Load a cached book's dataframe and metadata.
+
+    Args:
+        book_title: The title of the book to load
+
+    Returns:
+        Dict with status, book_data, book_title, book_author, and filename, or error dict
+    """
+    if not book_title:
+        return None
+
+    filename = book_title.replace(" ", "_").lower()
+
+    try:
+        if USE_GCS:
+            # Load from GCS with Redis caching
+            embeddings_blob = f"{GCS_EMBEDDINGS_PREFIX}/{filename}.pkl"
+            metadata_blob = f"{GCS_METADATA_PREFIX}/{filename}_metadata.json"
+
+            df = read_pickle_with_cache(GCS_BUCKET_NAME, embeddings_blob)
+            metadata = read_json_with_cache(GCS_BUCKET_NAME, metadata_blob)
+
+            if df is None or metadata is None:
+                return None
+        else:
+            # Load from local filesystem
+            pickle_path = f"{PROCESSED_BOOKS_EMBEDDINGS_DIR}/{filename}.pkl"
+            metadata_path = f"{PROCESSED_BOOKS_METADATA_DIR}/{filename}_metadata.json"
+
+            if not os.path.exists(pickle_path) or not os.path.exists(metadata_path):
+                return None
+
+            df = pd.read_pickle(pickle_path)
+
+            with open(metadata_path, "r", encoding="utf-8") as f:
+                metadata = json.load(f)
+
+        return {
+            "status": "success",
+            "book_data": df,
+            "book_title": metadata.get("book_title"),
+            "book_author": metadata.get("book_author"),
+            "filename": filename,
+            "cached": True,
+        }
+    except Exception as e:
+        if os.environ.get("ENV") == "dev":
+            print(f"Error loading cached book {book_title}: {str(e)}")
+        return None
 
 
 def embed_fn(title: str, text: str, client) -> Union[dict, None]:
@@ -398,7 +492,11 @@ def get_book_df(
     small_paragraph_overlap: int = 2,
     client=None,
 ) -> dict:
-    """Download and process a book into a DataFrame of chunks with embeddings."""
+    """Download and process a book into a DataFrame of chunks with embeddings.
+
+    Checks cache first after parsing to see if the book has already been processed.
+    If cached, returns the stored data without re-embedding.
+    """
     if url is None or local_filename is None:
         return {
             "status": "error",
@@ -431,6 +529,22 @@ def get_book_df(
             "message": "No chapters found in book. Check parsing logic.",
         }
 
+    # Extract book metadata early
+    book_title = book_data.get("title")
+    book_author = book_data.get("author")
+
+    # Check if this book is already cached (avoids expensive re-embedding)
+    if book_title and is_book_cached(book_title):
+        if os.environ.get("ENV") == "dev":
+            print(f"Book '{book_title}' found in cache, skipping reprocessing.")
+
+        cached_result = load_cached_book(book_title)
+        if cached_result:
+            # cleanup downloaded file
+            if os.path.exists(filepath):
+                os.remove(filepath)
+            return cached_result
+
     # Chunk the parsed book
     chunk_processor = ChunkProcessor(
         target_chunk_size,
@@ -460,9 +574,6 @@ def get_book_df(
             "message": "Error applying embeddings.",
         }
 
-    # Create chapter metadata for this book
-    book_title = book_data.get("title")
-    book_author = book_data.get("author")
     filename = book_title.replace(" ", "_").lower() if book_title else local_filename
 
     # cleanup downloaded file
@@ -475,4 +586,5 @@ def get_book_df(
         "book_author": book_author,
         "filename": filename,
         "book_data": processed_data,
+        "cached": False,
     }

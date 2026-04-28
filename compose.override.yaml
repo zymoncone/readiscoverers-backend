@@ -17,11 +17,20 @@ services:
       - GOOGLE_CLOUD_LOCATION=${GOOGLE_CLOUD_LOCATION}
       - CORPUS_ID=${CORPUS_ID}
       - ENV=${ENV}
+      # GCS integration
+      - USE_GCS=${USE_GCS}
+      - GCS_BUCKET_NAME=${GCS_BUCKET_NAME}
+      # Redis caching
+      - USE_REDIS=${USE_REDIS}
+      - REDIS_URL=${REDIS_URL}
+      - REDIS_TTL_SECONDS=3600
     volumes:
       # Mount local gcloud config (read-only)
       - ~/.config/gcloud:/home/appuser/.config/gcloud:ro
-      # Mount temp directory to persist downloaded files
+      # Mount temp directory for temporary downloads and debug files
       - ./temp:/tmp
+      # Mount processed books directory for persistent pickle/metadata caching
+      - ./processed_books:/app/processed_books
     develop:
       watch:
         # Sync source changes into the running container

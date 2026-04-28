@@ -11,7 +11,21 @@ import pandas as pd
 import vertexai
 from google import genai
 
-from .constants import TEMP_DIR
+from .constants import (
+    TEMP_DIR,
+    PROCESSED_BOOKS_EMBEDDINGS_DIR,
+    PROCESSED_BOOKS_METADATA_DIR,
+    USE_GCS,
+    GCS_BUCKET_NAME,
+    GCS_EMBEDDINGS_PREFIX,
+    GCS_METADATA_PREFIX,
+)
+from .gcs_utils import (
+    write_pickle_to_gcs,
+    write_json_to_gcs,
+    read_pickle_with_cache,
+    read_json_with_cache,
+)
 from .get_book_df import get_book_df
 from .model import call_model_with_structured_output
 from .search import find_best_text_chunks
@@ -113,10 +127,10 @@ async def book_data(req: BookDataRequest):
             "message": "All chunking parameters must be positive integers.",
         }
 
-    book_uuid = str(uuid.uuid4())  # Generate UUID
+    book_uuid = str(uuid.uuid4())  # Generate UUID for filename during download
     response = get_book_df(
         url=req.url,
-        local_filename=book_uuid,  # Change to random UUID filename
+        local_filename=book_uuid,
         target_chunk_size=int(req.target_chunk_size),
         sentence_overlap=int(req.sentence_overlap),
         small_paragraph_length=int(req.small_paragraph_length),
@@ -130,33 +144,84 @@ async def book_data(req: BookDataRequest):
     filename = response["filename"]
     book_title = response.get("book_title", "Unknown Title")
     book_author = response.get("book_author", "Unknown Author")
+    was_cached = response.get("cached", False)
 
-    # Save both the dataframe AND metadata
-    os.makedirs(TEMP_DIR, exist_ok=True)
-    df.to_pickle(f"{TEMP_DIR}/{filename}.pkl")
+    # Only save if not already cached
+    if not was_cached:
+        if USE_GCS:
+            # Save to GCS
+            embeddings_blob = f"{GCS_EMBEDDINGS_PREFIX}/{filename}.pkl"
+            metadata_blob = f"{GCS_METADATA_PREFIX}/{filename}_metadata.json"
 
-    if os.environ.get("ENV") == "dev":
-        print("Saving CSV for debugging purposes.")
-        df.to_csv(f"{TEMP_DIR}/_DEV_{filename}.csv", index=False)
-    # Save chunking metadata separately
-    metadata = {
-        "target_chunk_size": req.target_chunk_size,
-        "sentence_overlap": req.sentence_overlap,
-        "small_paragraph_length": req.small_paragraph_length,
-        "small_paragraph_overlap": req.small_paragraph_overlap,
-        "book_title": book_title,
-        "book_author": book_author,
-    }
+            success = write_pickle_to_gcs(GCS_BUCKET_NAME, embeddings_blob, df)
+            if not success:
+                return {
+                    "status": "error",
+                    "message": "Failed to save embeddings to GCS",
+                }
 
-    with open(f"{TEMP_DIR}/{filename}_metadata.json", "w", encoding="utf-8") as f:
-        json.dump(metadata, f)
+            # Save chunking metadata
+            metadata = {
+                "target_chunk_size": req.target_chunk_size,
+                "sentence_overlap": req.sentence_overlap,
+                "small_paragraph_length": req.small_paragraph_length,
+                "small_paragraph_overlap": req.small_paragraph_overlap,
+                "book_title": book_title,
+                "book_author": book_author,
+            }
+
+            success = write_json_to_gcs(GCS_BUCKET_NAME, metadata_blob, metadata)
+            if not success:
+                return {"status": "error", "message": "Failed to save metadata to GCS"}
+
+            if os.environ.get("ENV") == "dev":
+                print(
+                    f"Saved book '{book_title}' to GCS: {embeddings_blob}, {metadata_blob}"
+                )
+        else:
+            # Save to local filesystem
+            os.makedirs(PROCESSED_BOOKS_EMBEDDINGS_DIR, exist_ok=True)
+            os.makedirs(PROCESSED_BOOKS_METADATA_DIR, exist_ok=True)
+
+            # Save pickle to embeddings directory
+            df.to_pickle(f"{PROCESSED_BOOKS_EMBEDDINGS_DIR}/{filename}.pkl")
+
+            # Save chunking metadata to metadata directory
+            metadata = {
+                "target_chunk_size": req.target_chunk_size,
+                "sentence_overlap": req.sentence_overlap,
+                "small_paragraph_length": req.small_paragraph_length,
+                "small_paragraph_overlap": req.small_paragraph_overlap,
+                "book_title": book_title,
+                "book_author": book_author,
+            }
+
+            with open(
+                f"{PROCESSED_BOOKS_METADATA_DIR}/{filename}_metadata.json",
+                "w",
+                encoding="utf-8",
+            ) as f:
+                json.dump(metadata, f)
+
+        # Save debug CSV to temp directory (always, regardless of storage backend)
+        if os.environ.get("ENV") == "dev":
+            print("Saving CSV for debugging purposes.")
+            os.makedirs(TEMP_DIR, exist_ok=True)
+            df.to_csv(f"{TEMP_DIR}/_DEV_{filename}.csv", index=False)
+    elif os.environ.get("ENV") == "dev":
+        print(f"Book '{book_title}' was cached, skipped saving.")
 
     return {
         "status": "success",
         "filename": filename,
         "book_title": book_title,
         "book_author": book_author,
-        "message": "Book data processed and saved.",
+        "cached": was_cached,
+        "message": (
+            "Book data processed and saved."
+            if not was_cached
+            else "Book data retrieved from cache."
+        ),
     }
 
 
@@ -194,35 +259,50 @@ async def search_response(req: SearchRequest):
 
     # Load dataframe
     for filename in req.filenames:
-        pickle_path = f"{TEMP_DIR}/{filename}.pkl"
-        if not os.path.exists(pickle_path):
-            return {
-                "status": "error",
-                "message": f"Dataframe file not found: {pickle_path}",
-            }
-        df = pd.read_pickle(pickle_path)
+        if USE_GCS:
+            # Load from GCS with Redis caching
+            embeddings_blob = f"{GCS_EMBEDDINGS_PREFIX}/{filename}.pkl"
+            metadata_blob = f"{GCS_METADATA_PREFIX}/{filename}_metadata.json"
+
+            df = read_pickle_with_cache(GCS_BUCKET_NAME, embeddings_blob)
+            if df is None:
+                return {
+                    "status": "error",
+                    "message": f"Dataframe file not found in GCS: {embeddings_blob}",
+                }
+
+            chunking_metadata = read_json_with_cache(GCS_BUCKET_NAME, metadata_blob)
+            if chunking_metadata is None:
+                if os.environ.get("ENV") == "dev":
+                    print(f"Chunking metadata file not found in GCS: {metadata_blob}")
+        else:
+            # Load from local filesystem
+            pickle_path = f"{PROCESSED_BOOKS_EMBEDDINGS_DIR}/{filename}.pkl"
+            if not os.path.exists(pickle_path):
+                return {
+                    "status": "error",
+                    "message": f"Dataframe file not found: {pickle_path}",
+                }
+            df = pd.read_pickle(pickle_path)
+
+            # Load chunking metadata
+            # THIS DOESNT NEED TO BE PER BOOK
+            metadata_path = f"{PROCESSED_BOOKS_METADATA_DIR}/{filename}_metadata.json"
+
+            if os.path.exists(metadata_path):
+                with open(metadata_path, "r", encoding="utf-8") as f:
+                    chunking_metadata = json.load(f)
+            elif os.environ.get("ENV") == "dev":
+                print(f"Chunking metadata file not found: {metadata_path}")
 
         # Add book identifier and original index before combining
         df["filename"] = filename
         df["book_chunk_index"] = df.index  # Store original index
         df["book_chunk_length"] = len(df)  # Store total chunks in this book
 
-        # Load chunking metadata
-        # THIS DOESNT NEED TO BE PER BOOK
-        metadata_path = f"{TEMP_DIR}/{filename}_metadata.json"
-
-        if os.path.exists(metadata_path):
-            with open(metadata_path, "r", encoding="utf-8") as f:
-                chunking_metadata = json.load(f)
-
-            df["book_title"] = chunking_metadata["book_title"]
-            df["book_author"] = chunking_metadata["book_author"]
-
-            del chunking_metadata["book_title"]
-            del chunking_metadata["book_author"]
-
-        elif os.environ.get("ENV") == "dev":
-            print(f"Chunking metadata file not found: {metadata_path}")
+        if chunking_metadata:
+            df["book_title"] = chunking_metadata.get("book_title")
+            df["book_author"] = chunking_metadata.get("book_author")
 
         combined_dfs_as_list.append(df)
 

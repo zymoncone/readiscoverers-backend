@@ -1,0 +1,1 @@
+> Files in this folder contain json or embedded vector pkl files and will be pulled from here if not selected to use Google Cloud Storage. These files are intentionally left out via .gitignore
