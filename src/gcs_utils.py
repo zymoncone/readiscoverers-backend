@@ -225,13 +225,11 @@ def read_pickle_with_cache(bucket_name: str, blob_name: str) -> Union[Any, None]
     # Try Redis cache first
     cached_data = get_cached_data(cache_key)
     if cached_data is not None:
-        if os.environ.get("ENV") == "dev":
-            print(f"Cache hit for pickle: {blob_name}")
+        print(f"Cache hit for pickle: {blob_name}")
         return cached_data
 
     # Cache miss - fetch from GCS
-    if os.environ.get("ENV") == "dev":
-        print(f"Cache miss for pickle: {blob_name}, fetching from GCS")
+    print(f"Cache miss for pickle: {blob_name}, fetching from GCS")
     data = read_pickle_from_gcs(bucket_name, blob_name)
 
     # Cache the result if successful
@@ -256,13 +254,11 @@ def read_json_with_cache(bucket_name: str, blob_name: str) -> Union[dict, None]:
     # Try Redis cache first
     cached_data = get_cached_data(cache_key)
     if cached_data is not None:
-        if os.environ.get("ENV") == "dev":
-            print(f"Cache hit for JSON: {blob_name}")
+        print(f"Cache hit for JSON: {blob_name}")
         return cached_data
 
     # Cache miss - fetch from GCS
-    if os.environ.get("ENV") == "dev":
-        print(f"Cache miss for JSON: {blob_name}, fetching from GCS")
+    print(f"Cache miss for JSON: {blob_name}, fetching from GCS")
     data = read_json_from_gcs(bucket_name, blob_name)
 
     # Cache the result if successful
