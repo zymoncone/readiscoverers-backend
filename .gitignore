@@ -54,6 +54,8 @@ test.py
 /temp/*.json
 /temp/*.html
 /temp/*.csv
+/processed_books/embeddings/*.pkl
+/processed_books/metadata/*.json
 /notebooks/ignore_test.ipynb
 /notebooks/*.html
 /notebooks/*.csv
