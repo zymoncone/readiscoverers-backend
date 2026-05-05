@@ -1,0 +1,1 @@
+> Files in this folder contain temperary objects of raw text or html of book or text content. If a url hash matches the saved file exactly, the cached file here will be pulled instead of re-downloading the file. These files are intentionally left out via .gitignore

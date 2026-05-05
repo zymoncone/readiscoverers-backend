@@ -1,12 +1,17 @@
 """Module for downloading and processing books into searchable chunks."""
 
+import glob
+import hashlib
 import os
 import re
 import json
 from typing import Union
+from urllib.parse import parse_qsl, urlparse, urlunparse
 
 import pandas as pd
 import requests
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
 from google.genai.types import EmbedContentConfig
 
 from .constants import (
@@ -152,8 +157,95 @@ def apply_embeddings(df: pd.DataFrame, client) -> Union[pd.DataFrame, None]:
     return df
 
 
+def _normalize_url(url: str) -> str:
+    """Normalize URLs to improve cache reuse across equivalent links."""
+    parsed = urlparse(url.strip())
+    scheme = parsed.scheme.lower()
+    netloc = parsed.hostname.lower() if parsed.hostname else ""
+    if parsed.port and parsed.port not in (80, 443):
+        netloc = f"{netloc}:{parsed.port}"
+
+    query_params = sorted(parse_qsl(parsed.query, keep_blank_values=True))
+    normalized_query = "&".join([f"{k}={v}" for k, v in query_params])
+
+    normalized = urlunparse(
+        (
+            scheme,
+            netloc,
+            parsed.path or "",
+            parsed.params or "",
+            normalized_query,
+            "",
+        )
+    )
+    return normalized
+
+
+def _get_cached_filepath(url: str) -> str:
+    """Return a stable cache filepath derived from the normalized URL."""
+    normalized_url = _normalize_url(url)
+    file_extension = ".html" if normalized_url.endswith(".html") else ".txt"
+    url_hash = hashlib.sha256(normalized_url.encode("utf-8")).hexdigest()
+    cache_dir = os.path.join(TEMP_DIR, "download_cache")
+    os.makedirs(cache_dir, exist_ok=True)
+    return os.path.join(cache_dir, f"{url_hash}{file_extension}")
+
+
+def _find_cached_filepath(url: str) -> str | None:
+    """Find a cached download, including legacy files with a UUID suffix."""
+    filepath = _get_cached_filepath(url)
+    if os.path.exists(filepath):
+        return filepath
+
+    cache_dir = os.path.dirname(filepath)
+    filename = os.path.basename(filepath)
+    prefix, extension = os.path.splitext(filename)
+    legacy_pattern = os.path.join(cache_dir, f"{prefix}_*{extension}")
+    legacy_matches = glob.glob(legacy_pattern)
+    if legacy_matches:
+        legacy_path = legacy_matches[0]
+        # Migrate legacy file to new path
+        try:
+            os.rename(legacy_path, filepath)
+            if os.environ.get("ENV") == "dev":
+                print(f"Migrated legacy cache: {legacy_path} -> {filepath}")
+        except OSError:
+            pass  # If rename fails, just use the legacy path
+        return filepath
+
+    return None
+
+
+def _create_requests_session(
+    total_retries: int = 5,
+    backoff_factor: float = 1.0,
+    status_forcelist: tuple = (429, 500, 502, 503, 504),
+) -> requests.Session:
+    """Create a requests session configured for retries and resiliency."""
+    session = requests.Session()
+    retry = Retry(
+        total=total_retries,
+        connect=total_retries,
+        read=total_retries,
+        status=total_retries,
+        backoff_factor=backoff_factor,
+        status_forcelist=status_forcelist,
+        allowed_methods=frozenset(["HEAD", "GET", "OPTIONS"]),
+        raise_on_status=False,
+    )
+    adapter = HTTPAdapter(max_retries=retry)
+    session.mount("https://", adapter)
+    session.mount("http://", adapter)
+    session.headers.update(
+        {
+            "User-Agent": "ReadiscoverersDownloader/1.0",
+        }
+    )
+    return session
+
+
 def download_file(url: str, local_filename: str) -> dict:
-    """Download a file from URL to local workspace.
+    """Download a file from URL to local workspace, caching by URL.
 
     Args:
         url: The URL of the text file to download
@@ -172,40 +264,50 @@ def download_file(url: str, local_filename: str) -> dict:
     if os.environ.get("ENV") == "dev":
         print(f"Determined file extension: {file_extension}")
 
-    # Remove any file extension from local_filename
-    local_filename_cleaned = re.sub(r"\.[^./\\]+$", "", local_filename)
-    filename_ext = f"{local_filename_cleaned}{file_extension}"
+    # Ensure temp directory exists and is a directory
+    os.makedirs(TEMP_DIR, exist_ok=True)
+
+    cached_filepath = _find_cached_filepath(url)
+    if cached_filepath:
+        if os.environ.get("ENV") == "dev":
+            print(
+                f"Using cached download for URL: {url}\n"
+                f"Cache path: {cached_filepath}"
+            )
+        return {"status": "success", "filepath": cached_filepath, "cached": True}
+
+    filepath = _get_cached_filepath(url)
+    temp_filepath = f"{filepath}.part"
+    session = _create_requests_session()
 
     try:
-        # Check if 'temp' exists as a file and remove it
-        if os.path.exists(TEMP_DIR) and os.path.isfile(TEMP_DIR):
-            os.remove(TEMP_DIR)
+        with session.get(url, timeout=(10, 60), stream=True) as response:
+            response.raise_for_status()
+            with open(temp_filepath, "wb") as f:
+                for chunk in response.iter_content(chunk_size=8192):
+                    if chunk:
+                        f.write(chunk)
 
-        # Create temp directory
-        os.makedirs(TEMP_DIR, exist_ok=True)
-
-        # Construct full path with temp/ directory
-        filepath = os.path.join(TEMP_DIR, filename_ext)
-
-        response = requests.get(url, timeout=60)  # 60 second timeout
-        response.raise_for_status()  # Raise error if download fails
-
-        with open(filepath, "w", encoding="utf-8") as f:
-            f.write(response.text)
-
+        os.replace(temp_filepath, filepath)
         if os.environ.get("ENV") == "dev":
             print(f"Downloaded {filepath}")
-        return {"status": "success", "filepath": filepath}
+        return {"status": "success", "filepath": filepath, "cached": False}
     except requests.RequestException as e:
+        if os.path.exists(temp_filepath):
+            os.remove(temp_filepath)
         return {
             "status": "error",
-            "message": f"Error downloading {filename_ext}: {str(e)}",
+            "message": f"Error downloading {url}: {str(e)}",
         }
     except IOError as e:
+        if os.path.exists(temp_filepath):
+            os.remove(temp_filepath)
         return {
             "status": "error",
-            "message": f"Error writing file {filename_ext}: {str(e)}",
+            "message": f"Error writing file {filepath}: {str(e)}",
         }
+    finally:
+        session.close()
 
 
 class ChunkProcessor:
@@ -540,9 +642,6 @@ def get_book_df(
 
         cached_result = load_cached_book(book_title)
         if cached_result:
-            # cleanup downloaded file
-            if os.path.exists(filepath):
-                os.remove(filepath)
             return cached_result
 
     # Chunk the parsed book
@@ -575,10 +674,6 @@ def get_book_df(
         }
 
     filename = book_title.replace(" ", "_").lower() if book_title else local_filename
-
-    # cleanup downloaded file
-    if os.path.exists(filepath):
-        os.remove(filepath)
 
     return {
         "status": "success",
