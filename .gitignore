@@ -54,6 +54,10 @@ test.py
 /temp/*.json
 /temp/*.html
 /temp/*.csv
+/temp/download_cache/*.html
+/temp/download_cache/*.csv
+/temp/download_cache/*.json
+/temp/download_cache/*.txt
 /processed_books/embeddings/*.pkl
 /processed_books/metadata/*.json
 /notebooks/ignore_test.ipynb
