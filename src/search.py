@@ -210,9 +210,11 @@ def find_best_text_chunks(
             "filename": filename,
         }
 
-        # Add chunking metadata if provided
+        # Add chunking metadata if provided, but don't overwrite row-level fields
         if chunking_metadata:
-            result.update(chunking_metadata)
+            for key, value in chunking_metadata.items():
+                if key not in result:
+                    result[key] = value
 
         results.append({"score_order": int(similarity_score_order), "data": result})
 

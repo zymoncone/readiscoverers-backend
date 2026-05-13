@@ -4,7 +4,7 @@ import os
 import re
 
 EMBEDDING_MODEL_ID = "text-embedding-005"
-MODEL_ID = "gemini-2.0-flash-001"
+MODEL_ID = "gemini-2.5-flash-lite"
 
 # Temporary directory for downloads and dev files (cleaned up regularly)
 TEMP_DIR = "/tmp"

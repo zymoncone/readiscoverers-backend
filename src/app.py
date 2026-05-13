@@ -261,10 +261,10 @@ async def search_response(req: SearchRequest):
 
     # Load and combine dataframes from all filenames
     combined_dfs_as_list = []
-    chunking_metadata = None
 
     # Load dataframe
     for filename in req.filenames:
+        chunking_metadata = None
         if USE_GCS:
             # Load from GCS with Redis caching
             embeddings_blob = f"{GCS_EMBEDDINGS_PREFIX}/{filename}.pkl"
