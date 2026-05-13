@@ -37,6 +37,8 @@ LOCATION = str(os.environ.get("GOOGLE_CLOUD_LOCATION"))
 allowed_origins = [
     "http://localhost:3000",
     "http://localhost:8080",
+    "http://localhost:8888",
+    "http://192.168.50.142:8888",
     "http://127.0.0.1:3000",
     "http://127.0.0.1:8080",
     "http://192.168.50.143:3000",
@@ -99,7 +101,9 @@ async def root(request: Request):
     """Root endpoint to verify API is running."""
     origin = request.headers.get("origin", "No origin header")
     print(f"Root endpoint called from origin: {origin}")
-    return {"message": "Hey there! Looks like the backend API is healthy."}
+    return {
+        "message": "Hey there! You did not provide an endpoint, but looks like the backend API is healthy."
+    }
 
 
 @app.options("/")
