@@ -24,6 +24,8 @@ services:
       - USE_REDIS=${USE_REDIS}
       - REDIS_URL=${REDIS_URL}
       - REDIS_TTL_SECONDS=3600
+      # Proxy secret for frontend integration
+      - PROXY_SECRET=${PROXY_SECRET}
     volumes:
       # Mount local gcloud config (read-only)
       - ~/.config/gcloud:/home/appuser/.config/gcloud:ro

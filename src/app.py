@@ -7,6 +7,7 @@ import uuid
 from pydantic import BaseModel
 from fastapi import FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 import pandas as pd
 import vertexai
 from google import genai
@@ -32,24 +33,17 @@ from .search import find_best_text_chunks
 
 PROJECT_ID = str(os.environ.get("GOOGLE_CLOUD_PROJECT"))
 LOCATION = str(os.environ.get("GOOGLE_CLOUD_LOCATION"))
+PROXY_SECRET = os.environ.get("PROXY_SECRET")
 
-# All origins (production + localhost for testing)
+# Localhost only — production traffic comes through the Netlify proxy (server-to-server, no Origin header)
 allowed_origins = [
     "http://localhost:3000",
     "http://localhost:8080",
     "http://localhost:8888",
-    "http://192.168.50.142:8888",
-    "http://127.0.0.1:3000",
-    "http://127.0.0.1:8080",
-    "http://192.168.50.143:3000",
-    "https://readiscover.app",
-    "https://www.readiscover.app",
 ]
 
 app = FastAPI()
 
-# Add CORS middleware - this will work when accessing Cloud Run directly
-# and will also add headers that work through API Gateway
 app.add_middleware(
     CORSMiddleware,
     allow_origins=allowed_origins,
@@ -58,6 +52,14 @@ app.add_middleware(
     allow_headers=["*"],
     expose_headers=["*"],
 )
+
+
+@app.middleware("http")
+async def verify_proxy_secret(request: Request, call_next):
+    if PROXY_SECRET and request.method == "POST":
+        if request.headers.get("x-proxy-secret") != PROXY_SECRET:
+            return JSONResponse({"error": "Unauthorized"}, status_code=401)
+    return await call_next(request)
 
 
 vertexai.init(project=PROJECT_ID, location=LOCATION)
