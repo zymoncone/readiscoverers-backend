@@ -9,8 +9,8 @@ from fastapi import FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 import pandas as pd
-import vertexai
 from google import genai
+from google.genai.types import HttpOptions
 
 from .constants import (
     TEMP_DIR,
@@ -34,6 +34,14 @@ from .search import find_best_text_chunks
 PROJECT_ID = str(os.environ.get("GOOGLE_CLOUD_PROJECT"))
 LOCATION = str(os.environ.get("GOOGLE_CLOUD_LOCATION"))
 PROXY_SECRET = os.environ.get("PROXY_SECRET")
+
+# Initialize the GenAI client with Vertex AI integration
+client = genai.Client(
+    http_options=HttpOptions(api_version="v1"),
+    vertexai=True,
+    project=PROJECT_ID,
+    location=LOCATION,
+)
 
 # Localhost only — production traffic comes through the Netlify proxy (server-to-server, no Origin header)
 allowed_origins = [
@@ -60,12 +68,6 @@ async def verify_proxy_secret(request: Request, call_next):
         if request.headers.get("x-proxy-secret") != PROXY_SECRET:
             return JSONResponse({"error": "Unauthorized"}, status_code=401)
     return await call_next(request)
-
-
-vertexai.init(project=PROJECT_ID, location=LOCATION)
-client = genai.Client(
-    vertexai=True, project=PROJECT_ID, location=LOCATION
-)  # Changed location to match vertexai.init
 
 
 class ModelRequest(BaseModel):
