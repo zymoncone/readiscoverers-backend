@@ -20,6 +20,7 @@ from .constants import (
     PROCESSED_BOOKS_EMBEDDINGS_DIR,
     PROCESSED_BOOKS_METADATA_DIR,
     USE_GCS,
+    USE_REDIS,
     GCS_BUCKET_NAME,
     GCS_EMBEDDINGS_PREFIX,
     GCS_METADATA_PREFIX,
@@ -30,6 +31,8 @@ from .gcs_utils import (
     read_pickle_with_cache,
     read_json_with_cache,
     blob_exists_in_gcs,
+    get_cached_data,
+    set_cached_data,
 )
 from .parse_html import parse_html_book
 from .parse_txt import parse_txt_book
@@ -605,6 +608,21 @@ def get_book_df(
             "message": "URL and local filename must be provided.",
         }
 
+    # Derive a stable hash from the URL once; used for both the fast-path
+    # Redis lookup and for storing the mapping after first processing.
+    url_hash = hashlib.sha256(_normalize_url(url).encode("utf-8")).hexdigest()
+
+    # Fast path: if we've processed this URL before, skip the text
+    # download and re-parse entirely and go straight to the cached embeddings.
+    # This keeps cold-start retries well under the proxy timeout.
+    if USE_REDIS:
+        cached_filename = get_cached_data(f"url_to_filename:{url_hash}")
+        if cached_filename:
+            cached_result = load_cached_book(cached_filename)
+            if cached_result:
+                return cached_result
+            # Filename in Redis but book data evicted — fall through and reprocess
+
     # Download file
     download_result = download_file(url, local_filename)
     if download_result["status"] == "error":
@@ -642,6 +660,10 @@ def get_book_df(
 
         cached_result = load_cached_book(book_title)
         if cached_result:
+            if USE_REDIS:
+                set_cached_data(
+                    f"url_to_filename:{url_hash}", cached_result["filename"]
+                )
             return cached_result
 
     # Chunk the parsed book
@@ -674,6 +696,9 @@ def get_book_df(
         }
 
     filename = book_title.replace(" ", "_").lower() if book_title else local_filename
+
+    if USE_REDIS:
+        set_cached_data(f"url_to_filename:{url_hash}", filename)
 
     return {
         "status": "success",
